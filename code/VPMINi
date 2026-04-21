@@ -1,0 +1,981 @@
+// This work is based on:
+//   Volume Profile with Node Detection © LuxAlgo (CC BY-NC-SA 4.0)
+//   Delta Flow Profile © LuxAlgo (CC BY-NC-SA 4.0)
+// Merged, extended and converted to Pine Script v6 by 1vb0
+// https://creativecommons.org/licenses/by-nc-sa/4.0/
+// This work is an opensource use and subject to the fair use clauses 
+// but altered into an entirely other version of the products original use
+// mainly for UI accessibility..
+ 
+//@version=6
+indicator("Volume Profile + Delta Flow [Merged]",
+     shorttitle        = "VP+ΔFlow",
+     overlay           = true,
+     max_boxes_count   = 500,
+     max_lines_count   = 500,
+     max_labels_count  = 200,
+     max_bars_back     = 5000,
+     dynamic_requests  = true)
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  DISPLAY HELPER  (hides from status line)
+// ═══════════════════════════════════════════════════════════════════════════════
+disp = display.all - display.status_line
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  GROUP LABELS
+// ═══════════════════════════════════════════════════════════════════════════════
+gVPN = "① Volume Nodes"
+gVPC = "② Volume Profile — Components"
+gVPD = "③ Volume Profile — Display"
+gDFP = "④ Delta Flow Profile"
+gKEY = "⑤ Key Legend (Bottom-Left)"
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  ① VOLUME NODE SETTINGS
+// ═══════════════════════════════════════════════════════════════════════════════
+vn_peaksShow       = input.string("Peaks",  "Volume Peaks",
+     options=["Peaks","Clusters","None"], inline="vnP", group=gVPN, display=disp)
+vn_peakColor       = input.color(color.new(color.blue, 50), "",
+     inline="vnP", group=gVPN)
+vn_peakNodes       = input.int(9, "  Peak Detection %",
+     minval=0, maxval=100, group=gVPN, display=disp) / 100
+
+vn_troughsShow     = input.string("None", "Volume Troughs",
+     options=["Troughs","Clusters","None"], inline="vnT", group=gVPN, display=disp)
+vn_troughColor     = input.color(color.new(color.gray, 50), "",
+     inline="vnT", group=gVPN)
+vn_troughNodes     = input.int(7, "  Trough Detection %",
+     minval=0, maxval=100, group=gVPN, display=disp) / 100
+
+vn_threshold       = input.int(1, "Volume Node Threshold %",
+     minval=0, maxval=100, group=gVPN, display=disp) / 100
+
+vn_topN            = input.int(3, "Top N HVN in Key Table",
+     minval=0, maxval=10, group=gVPN,
+     tooltip="How many HVN levels to show in the bottom-left key table.")
+vn_topNLVN         = input.int(3, "Top N LVN in Key Table",
+     minval=0, maxval=10, group=gVPN,
+     tooltip="How many LVN levels to show in the bottom-left key table.")
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  ② VOLUME PROFILE — COMPONENTS
+// ═══════════════════════════════════════════════════════════════════════════════
+vp_profileShow     = input.bool(true, "Volume Profile",
+     inline="vp", group=gVPC)
+vp_gradColors      = input.string("Gradient Colors", "",
+     options=["Gradient Colors","Classic Colors"], inline="vp", group=gVPC)
+vp_vaUpColor       = input.color(color.new(#2962ff, 30), "  Value Area Up",
+     inline="VA", group=gVPC)
+vp_vaDnColor       = input.color(color.new(#fbc02d, 30), "/ Down",
+     inline="VA", group=gVPC)
+vp_upVolColor      = input.color(color.new(#5d606b, 50), "  Profile Up",
+     inline="VP", group=gVPC)
+vp_dnVolColor      = input.color(color.new(#d1d4dc, 50), "/ Down",
+     inline="VP", group=gVPC)
+
+vp_pocShow         = input.string("Developing", "Point of Control",
+     options=["Developing","Regular","None"], inline="poc", group=gVPC, display=disp)
+vp_pocColor        = input.color(#fbc02d, "", inline="poc", group=gVPC)
+vp_pocWidth        = input.int(2, "Width", inline="poc", group=gVPC, display=disp)
+
+vp_vahShow         = input.bool(false, "VAH", inline="vah", group=gVPC)
+vp_vahColor        = input.color(#2962ff, "",  inline="vah", group=gVPC)
+vp_valShow         = input.bool(false, "VAL", inline="val", group=gVPC)
+vp_valColor        = input.color(#2962ff, "",  inline="val", group=gVPC)
+
+vp_labelSz         = input.string("Small", "Profile Price Labels",
+     options=["Tiny","Small","Normal","None"], group=gVPC, display=disp)
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  ③ VOLUME PROFILE — DISPLAY
+// ═══════════════════════════════════════════════════════════════════════════════
+vp_lookback        = input.int(360, "Profile Lookback",
+     minval=10, maxval=5000, step=10, group=gVPD, display=disp)
+vp_valueAreaPct    = input.float(70, "Value Area %",
+     minval=0, maxval=100, group=gVPD, display=disp) / 100
+vp_numRows         = input.int(100, "Number of Rows",
+     minval=30, maxval=130, step=10, group=gVPD, display=disp)
+vp_placement       = input.string("Right", "Profile Placement",
+     options=["Right","Left"], group=gVPD, display=disp)
+vp_profileWidth    = input.float(31, "Profile Width %",
+     minval=0, maxval=250, group=gVPD, display=disp) / 100
+vp_hOffset         = input.int(13, "Horizontal Offset",
+     maxval=50, group=gVPD, display=disp)
+vp_vaBG            = input.bool(false, "Value Area Background",
+     inline="vBG", group=gVPD)
+vp_vaBGColor       = input.color(color.new(#2962ff, 89), "",
+     inline="vBG", group=gVPD)
+vp_prBG            = input.bool(false, "Profile Range Background",
+     inline="pBG", group=gVPD)
+vp_prBGColor       = input.color(color.new(#2962ff, 95), "",
+     inline="pBG", group=gVPD)
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  ④ DELTA FLOW PROFILE
+// ═══════════════════════════════════════════════════════════════════════════════
+dfp_moneyShow      = input.bool(true,  "Money Flow Overlay",       group=gDFP,
+     tooltip="Draws the normalized money-flow profile alongside the volume profile.")
+dfp_moneyColor     = input.color(color.new(#5288C4, 0), "Money Flow Colour", group=gDFP)
+dfp_normalized     = input.bool(true,  "Normalized",               group=gDFP)
+dfp_deltaShow      = input.bool(true,  "Delta Profile",            group=gDFP,
+     tooltip="Side profile showing bull/bear delta at each price row.")
+dfp_polarity       = input.string("Bar Polarity", "Polarity Method",
+     options=["Bar Polarity","Bar Buying/Selling Pressure"], group=gDFP, display=disp)
+dfp_bullColor      = input.color(color.new(#5288C4, 0), "Delta Bull", inline="dp", group=gDFP)
+dfp_bearColor      = input.color(color.new(#f7525f, 0), "/ Bear",     inline="dp", group=gDFP)
+dfp_pocShow        = input.bool(true,  "Level of Significance",    group=gDFP)
+dfp_pocType        = input.string("Developing", "",
+     options=["Developing","Level","Row"], group=gDFP, display=disp)
+dfp_pocColor       = input.color(color.new(#f23645, 25), "", group=gDFP)
+dfp_lookback       = input.int(360, "Delta Lookback",
+     minval=10, maxval=1500, step=10, group=gDFP, display=disp)
+dfp_numRows        = input.int(25,  "Delta Rows",
+     minval=10, maxval=125, step=5,  group=gDFP, display=disp)
+dfp_profWidth      = input.int(17,  "Delta Width %",
+     minval=10, maxval=50, group=gDFP, display=disp) / 100
+dfp_hOffset        = input.int(13,  "Delta Offset", group=gDFP, display=disp)
+dfp_labelSz        = input.string("Tiny", "Delta Text",
+     options=["Auto","Tiny","Small","None"], inline="dtxt", group=gDFP, display=disp)
+dfp_showCcy        = input.bool(false, "Currency", inline="dtxt", group=gDFP)
+dfp_priceLevels    = input.bool(false, "Price Levels", group=gDFP)
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  ⑤ KEY LEGEND
+// ═══════════════════════════════════════════════════════════════════════════════
+key_show           = input.bool(true, "Show Key Table",  group=gKEY)
+key_showDelta      = input.bool(true, "Show Delta % per Zone", group=gKEY,
+     tooltip="Shows the bull/bear delta percentage at each HVN/LVN in the key table.")
+key_showVolPct     = input.bool(true, "Show Volume % per Zone", group=gKEY)
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  USER DEFINED TYPES
+// ═══════════════════════════════════════════════════════════════════════════════
+type BAR
+    float open   = open
+    float high   = high
+    float low    = low
+    float close  = close
+    float volume = volume
+    int   index  = bar_index
+
+type barData
+    float[] barHigh
+    float[] barLow
+    float[] barVolume
+    bool[]  barPolarity
+    int[]   barCount
+
+type volumeData
+    float[] totalVolume
+    float[] bullVolume
+    float[] bearVolume
+    float[] deltaVolume
+    float[] moneyFlow
+    float[] bullMoneyFlow
+    int[]   endProfileIndex
+    bool[]  isPeak
+    bool[]  isTrough
+
+type volumeProfile
+    box[]         boxes
+    chart.point[] pocPoints
+    polyline      pocPolyline
+    int           pocLevel
+    int           vahLevel
+    int           valLevel
+    int           startIndex
+
+// ─── Delta flow types ────────────────────────────────────────────────────────
+type dfpBar
+    float o = open
+    float h = high
+    float l = low
+    float c = close
+    float v = volume
+    int   i = bar_index
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  HELPERS
+// ═══════════════════════════════════════════════════════════════════════════════
+f_labelSz(string t) =>
+    switch t
+        "Tiny"   => size.tiny
+        "Small"  => size.small
+        "Normal" => size.normal
+        => size.auto
+
+f_calcTF(int depth) =>
+    int tf = timeframe.in_seconds(timeframe.period)
+    int m  = 60
+    if depth == 2
+        switch
+            tf <       30  => "1S"
+            tf <   1 * m   => "5S"
+            tf <=  15 * m  => "1"
+            tf <=  60 * m  => "5"
+            tf <= 240 * m  => "15"
+            tf <= 1440 * m => "60"
+            => "D"
+    else
+        switch
+            tf <       15  => "1S"
+            tf <       30  => "5S"
+            tf <    1 * m  => "15S"
+            tf <=   5 * m  => "1"
+            tf <=  15 * m  => "5"
+            tf <=  60 * m  => "15"
+            tf <= 240 * m  => "60"
+            tf <= 1440 * m => "240"
+            => "D"
+
+renderLine(_x1, _y1, _x2, _y2, _xloc, _extend, _color, _style, _width) =>
+    var id = line.new(_x1, _y1, _x2, _y2, _xloc, _extend, _color, _style, _width)
+    line.set_xy1(id, _x1, _y1)
+    line.set_xy2(id, _x2, _y2)
+    line.set_color(id, _color)
+
+renderLabel(_x, _y, _text, _color, _style, _tc, _sz, _tip) =>
+    var lb = label.new(_x, _y, _text, xloc.bar_index, yloc.price, _color, _style, _tc, _sz, text.align_left, _tip)
+    lb.set_xy(_x, _y)
+    lb.set_text(_text)
+    lb.set_tooltip(_tip)
+    lb.set_textcolor(_tc)
+
+f_pct(float v) => str.tostring(math.round(v * 100, 1)) + "%"
+f_fmtV(float v) =>
+    float a = math.abs(v)
+    a >= 1e6 ? str.tostring(v / 1e6, "#.0") + "M" : a >= 1e3 ? str.tostring(v / 1e3, "#.0") + "K" : str.tostring(math.round(v, 0), "#")
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  VOLUME PROFILE STATE
+// ═══════════════════════════════════════════════════════════════════════════════
+int vpLookback = last_bar_index > vp_lookback ? vp_lookback - 1 : last_bar_index
+
+BAR vpBar = BAR.new()
+BAR[] ltfBars = array.new<BAR>(1, BAR.new())
+
+var barData bda = barData.new(
+     array.new<float>(),
+     array.new<float>(),
+     array.new<float>(),
+     array.new<bool>(),
+     array.new<int>())
+
+volumeData vda = volumeData.new(
+     array.new_float(vp_numRows, 0.),
+     array.new_float(vp_numRows, 0.),
+     array.new_float(vp_numRows, 0.),
+     array.new_float(vp_numRows, 0.),
+     array.new_float(vp_numRows, 0.),
+     array.new_float(vp_numRows, 0.),
+     array.new_int  (vp_numRows, 0 ),
+     array.new_bool (vp_numRows, false),
+     array.new_bool (vp_numRows, false))
+
+var volumeProfile VP = volumeProfile.new(
+     array.new<box>(),
+     array.new<chart.point>(),
+     na, na, na, na, na)
+
+var float vpHi = na
+var float vpLo = na
+
+// ─── LTF data request for VP ─────────────────────────────────────────────────
+requestBars(string tf) =>
+    request.security_lower_tf(syminfo.tickerid, tf, BAR.new(), ignore_invalid_timeframe=true)
+
+ltfBars := vpLookback <= 700 ? requestBars(f_calcTF(2)) :
+           array.new<BAR>(1, BAR.new(vpBar.open, vpBar.high, vpBar.low, vpBar.close, vpBar.volume))
+
+// Track VP price range
+if vpBar.index == last_bar_index - vpLookback
+    VP.startIndex := vpBar.index
+    vpLo          := vpBar.low
+    vpHi          := vpBar.high
+else if vpBar.index > last_bar_index - vpLookback
+    vpLo := math.min(vpBar.low,  vpLo)
+    vpHi := math.max(vpBar.high, vpHi)
+
+// Collect LTF bars during history
+if barstate.ishistory and vpBar.index >= last_bar_index - vpLookback and vpBar.index < last_bar_index and ltfBars.size() > 0
+    if not na(nz(ltfBars.get(0).volume))
+        for k = 0 to ltfBars.size() - 1
+            bda.barHigh.push    (ltfBars.get(k).high)
+            bda.barLow.push     (ltfBars.get(k).low)
+            bda.barVolume.push  (ltfBars.get(k).volume)
+            bda.barPolarity.push(ltfBars.get(k).close > ltfBars.get(k).open)
+        bda.barCount.push(ltfBars.size())
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  DELTA FLOW STATE
+// ═══════════════════════════════════════════════════════════════════════════════
+int dfpLookback = last_bar_index > dfp_lookback ? dfp_lookback - 1 : last_bar_index
+
+dfpBar db = dfpBar.new()
+float nzV  = nz(db.v)
+
+float[] dfpVST = array.new_float(dfp_numRows, 0.)  // total money flow per row
+float[] dfpVSB = array.new_float(dfp_numRows, 0.)  // bullish money flow per row
+float[] dfpVSD = array.new_float(dfp_numRows, 0.)  // delta magnitude per row
+
+var box[]         dfpBoxes     = array.new<box>()
+var line[]        dfpLines     = array.new<line>()
+var chart.point[] dfpPocPts    = array.new<chart.point>()
+var polyline      dfpPocPoly   = na
+
+var float dfpLo = na
+var float dfpHi = na
+var int   dfpSI = na   // start bar index
+
+bool dfpBull = dfp_polarity == "Bar Polarity" ?
+     db.c > db.o : (db.c - db.l) > (db.h - db.c)
+
+if db.i == last_bar_index - dfpLookback
+    dfpSI := db.i
+    dfpLo := db.l
+    dfpHi := db.h
+else if db.i > last_bar_index - dfpLookback
+    dfpLo := math.min(db.l, dfpLo)
+    dfpHi := math.max(db.h, dfpHi)
+
+float dfpPSTP = (dfpHi - dfpLo) / dfp_numRows
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  KEY TABLE DATA ARRAYS  (populated during barstate.islast)
+// ═══════════════════════════════════════════════════════════════════════════════
+var float[] hvnPrice    = array.new_float()
+var float[] hvnVolPct   = array.new_float()
+var float[] hvnDeltaPct = array.new_float()
+var bool[]  hvnBullBias = array.new_bool()
+
+var float[] lvnPrice    = array.new_float()
+var float[] lvnVolPct   = array.new_float()
+var float[] lvnDeltaPct = array.new_float()
+var bool[]  lvnBullBias = array.new_bool()
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  MAIN RENDER BLOCK  (barstate.islast)
+// ═══════════════════════════════════════════════════════════════════════════════
+bool placementRight = vp_placement == "Right"
+labelSz = f_labelSz(vp_labelSz)
+dfpLblSz = f_labelSz(dfp_labelSz)
+
+float priceStep = na(vpHi) or na(vpLo) or vp_numRows <= 0 ? 0. : (vpHi - vpLo) / vp_numRows
+
+if barstate.islast and not na(nzV) and not timeframe.isseconds and vpLookback > 0 and priceStep > 0 and nzV > 0
+
+    // ── Clear old VP boxes/lines ─────────────────────────────────────
+    if VP.boxes.size() > 0
+        for i = 0 to VP.boxes.size() - 1
+            box.delete(VP.boxes.shift())
+    if VP.pocPoints.size() > 0
+        VP.pocPoints.clear()
+    VP.pocPolyline.delete()
+
+    // ── Clear old DFP boxes/lines ────────────────────────────────────
+    if dfpBoxes.size() > 0
+        for i = 0 to dfpBoxes.size() - 1
+            box.delete(dfpBoxes.shift())
+    if dfpLines.size() > 0
+        for i = 0 to dfpLines.size() - 1
+            line.delete(dfpLines.shift())
+    dfpPocPts.clear()
+    a_poly = polyline.all
+    if a_poly.size() > 0
+        for i = 0 to a_poly.size() - 1
+            polyline.delete(a_poly.get(i))
+
+    // ── Clear key table arrays ───────────────────────────────────────
+    hvnPrice.clear()   
+    hvnVolPct.clear()   
+    hvnDeltaPct.clear()   
+    hvnBullBias.clear()
+    lvnPrice.clear()   
+    lvnVolPct.clear()   
+    lvnDeltaPct.clear()   
+    lvnBullBias.clear() 
+
+    // ── Trim barData if overgrown ────────────────────────────────────
+    if bda.barCount.size() > vpLookback
+        int cnt = bda.barCount.shift()
+        for _ = 0 to cnt - 1
+            bda.barHigh.shift()
+            bda.barLow.shift()
+            bda.barVolume.shift()
+            bda.barPolarity.shift()
+
+    // ── Push current bar's LTF data ──────────────────────────────────
+    if ltfBars.size() > 0 and not na(nz(ltfBars.get(0).volume))
+        for k = 0 to ltfBars.size() - 1
+            bda.barHigh.push    (ltfBars.get(k).high)
+            bda.barLow.push     (ltfBars.get(k).low)
+            bda.barVolume.push  (ltfBars.get(k).volume)
+            bda.barPolarity.push(ltfBars.get(k).close > ltfBars.get(k).open)
+        bda.barCount.push(ltfBars.size())                                            
+
+
+    // ─────────────────────────────────────────────────────────────────
+    //  VOLUME PROFILE ACCUMULATION
+    // ─────────────────────────────────────────────────────────────────
+    int arrSz = bda.barVolume.size()
+    for ai = 0 to arrSz - 1
+        float bHi   = bda.barHigh.get(ai)
+        float bLo   = bda.barLow.get(ai)
+        float bVol  = bda.barVolume.get(ai)
+        bool  bBull = bda.barPolarity.get(ai)
+
+        int rowStart = math.max(math.floor((bLo - vpLo) / priceStep), 0)
+        int rowEnd   = math.min(math.floor((bHi - vpLo) / priceStep), vp_numRows - 1)
+
+        for row = rowStart to rowEnd
+            float rowPrice = vpLo + row * priceStep
+            float vPOR = bLo >= rowPrice and bHi > rowPrice + priceStep ? (rowPrice + priceStep - bLo) / (bHi - bLo) :
+                         bHi <= rowPrice + priceStep and bLo < rowPrice  ? (bHi - rowPrice) / (bHi - bLo) :
+                         bLo >= rowPrice and bHi <= rowPrice + priceStep ? 1. :
+                         priceStep / (bHi - bLo)
+
+            float allocVol = bVol * vPOR
+            vda.totalVolume.set(row, vda.totalVolume.get(row) + allocVol)
+            if bBull
+                vda.bullVolume.set(row, vda.bullVolume.get(row) + allocVol)
+
+    // ─────────────────────────────────────────────────────────────────
+    //  DELTA FLOW ACCUMULATION  (money flow = vol * price)
+    // ─────────────────────────────────────────────────────────────────
+    if dfpPSTP > 0
+        for bI = dfpLookback to 0
+            int lDfp = 0
+            for pLL = dfpLo to dfpHi - dfpPSTP by dfpPSTP
+                if (db[bI]).h >= pLL and (db[bI]).l < pLL + dfpPSTP
+                    float vPOR2 = (db[bI]).l >= pLL and (db[bI]).h > pLL + dfpPSTP ? (pLL + dfpPSTP - (db[bI]).l) / ((db[bI]).h - (db[bI]).l) :
+                                  (db[bI]).h <= pLL + dfpPSTP and (db[bI]).l < pLL  ? ((db[bI]).h - pLL) / ((db[bI]).h - (db[bI]).l) :
+                                  (db[bI]).l >= pLL and (db[bI]).h <= pLL + dfpPSTP ? 1. :
+                                  dfpPSTP / ((db[bI]).h - (db[bI]).l)
+
+                    float mf = nzV[bI] * vPOR2 * (dfpLo + (lDfp + 0.5) * dfpPSTP)
+                    dfpVST.set(lDfp, dfpVST.get(lDfp) + mf)
+                    if dfpBull[bI] and dfp_deltaShow
+                        dfpVSB.set(lDfp, dfpVSB.get(lDfp) + mf)
+                lDfp += 1
+
+            if dfp_pocShow and dfp_pocType == "Developing"
+                dfpPocPts.push(chart.point.from_index((db[bI]).i,
+                     dfpLo + (dfpVST.indexof(dfpVST.max()) + 0.5) * dfpPSTP))
+    // ─────────────────────────────────────────────────────────────────
+    //  POC / VAH / VAL  (from VP)
+    // ─────────────────────────────────────────────────────────────────
+    VP.pocLevel := vda.totalVolume.indexof(vda.totalVolume.max())
+
+    float totalForVA = vda.totalVolume.sum() * vp_valueAreaPct
+    float vaVol      = VP.pocLevel != -1 ? vda.totalVolume.get(VP.pocLevel) : 0.
+    VP.vahLevel := VP.pocLevel
+    VP.valLevel := VP.pocLevel
+
+    while vaVol < totalForVA
+        if VP.valLevel == 0 and VP.vahLevel == vp_numRows - 1
+            break
+        float volAbove = VP.vahLevel < vp_numRows - 1 ? vda.totalVolume.get(VP.vahLevel + 1) : 0.
+        float volBelow = VP.valLevel > 0              ? vda.totalVolume.get(VP.valLevel - 1) : 0.
+        if volAbove == 0. and volBelow == 0.
+            break
+        if volAbove >= volBelow
+            vaVol       += volAbove
+            VP.vahLevel += 1
+        else
+            vaVol       += volBelow
+            VP.valLevel -= 1
+
+    float vahPrice = vpLo + (VP.vahLevel + 1.) * priceStep
+    float pocPrice = vpLo + (VP.pocLevel + 0.5) * priceStep
+    float valPrice = vpLo + (VP.valLevel + 0.0) * priceStep
+
+    // ─────────────────────────────────────────────────────────────────
+    //  RENDER:  VOLUME PROFILE BARS
+    // ─────────────────────────────────────────────────────────────────
+    int plotLen   = math.min(vpLookback, 360)
+    float profW   = plotLen * vp_profileWidth
+    int   hOff    = int(profW + vp_hOffset)
+
+    for row = 0 to vp_numRows - 1
+        float totV  = vda.totalVolume.get(row)
+        float bullV = vda.bullVolume.get(row)
+        float vtMx  = vda.totalVolume.max()
+        float LpM   = vtMx > 0 ? totV / vtMx : 0.
+
+        bool inVA = row >= VP.valLevel and row <= VP.vahLevel
+
+        color upC = vp_profileShow and vp_gradColors == "Gradient Colors" ?
+             color.from_gradient(LpM, 0, 1, color.new(inVA ? vp_vaUpColor : vp_upVolColor, 95),
+                                             color.new(inVA ? vp_vaUpColor : vp_upVolColor, 0)) :
+             inVA ? vp_vaUpColor : vp_upVolColor
+        color dnC = vp_profileShow and vp_gradColors == "Gradient Colors" ?
+             color.from_gradient(LpM, 0, 1, color.new(inVA ? vp_vaDnColor : vp_dnVolColor, 95),
+                                             color.new(inVA ? vp_vaDnColor : vp_dnVolColor, 0)) :
+             inVA ? vp_vaDnColor : vp_dnVolColor
+
+        if vp_profileShow and VP.boxes.size() < 490
+            int sB = placementRight ?
+                 hOff + int(last_bar_index - bullV / math.max(vtMx, 1.) * profW) :
+                 VP.startIndex
+            int eB = placementRight ?
+                 hOff + last_bar_index :
+                 int(VP.startIndex + bullV / math.max(vtMx, 1.) * profW)
+            VP.boxes.push(box.new(sB, vpLo + (row + 0.1) * priceStep,
+                                  eB, vpLo + (row + 0.9) * priceStep,
+                                  color(na), bgcolor=upC))
+
+            int sB2 = placementRight ? sB : eB
+            int eB2 = placementRight ?
+                 sB - int((totV - bullV) / math.max(vtMx, 1.) * profW) :
+                 sB + int((totV - bullV) / math.max(vtMx, 1.) * profW)
+            VP.boxes.push(box.new(sB2, vpLo + (row + 0.1) * priceStep,
+                                  eB2, vpLo + (row + 0.9) * priceStep,
+                                  color(na), bgcolor=dnC))
+            vda.endProfileIndex.set(row, eB2)
+
+    // ─────────────────────────────────────────────────────────────────
+    //  RENDER:  POC / VAH / VAL lines
+    // ─────────────────────────────────────────────────────────────────
+    int lineEnd = placementRight ?
+         (vp_profileShow ? hOff : 0) + last_bar_index : last_bar_index
+
+    if vp_pocShow == "Regular"
+        renderLine(VP.startIndex, pocPrice, lineEnd, pocPrice,
+             xloc.bar_index, extend.none, vp_pocColor, line.style_solid, vp_pocWidth)
+
+    if vp_vahShow
+        renderLine(VP.startIndex, vahPrice, lineEnd, vahPrice,
+             xloc.bar_index, extend.none, vp_vahColor, line.style_solid, 1)
+
+    if vp_valShow
+        renderLine(VP.startIndex, valPrice, lineEnd, valPrice,
+             xloc.bar_index, extend.none, vp_valColor, line.style_solid, 1)
+
+    if vp_pocShow == "Developing"
+        VP.pocPolyline := polyline.new(VP.pocPoints, false, false,
+             xloc.bar_index, vp_pocColor, color(na), line.style_solid, vp_pocWidth)
+
+    if vp_vaBG
+        VP.boxes.push(box.new(VP.startIndex, valPrice, last_bar_index, vahPrice,
+             vp_vaBGColor, 1, line.style_dotted, bgcolor=vp_vaBGColor))
+    if vp_prBG
+        VP.boxes.push(box.new(VP.startIndex, vpLo, last_bar_index, vpHi,
+             vp_prBGColor, 1, line.style_dotted, bgcolor=vp_prBGColor))
+
+    if vp_labelSz != "None" and VP.pocLevel != -1
+        renderLabel(lineEnd, vpHi,    str.tostring(vpHi,    format.mintick),
+             color.new(chart.fg_color, 89), label.style_label_down, chart.fg_color, labelSz, "Profile High")
+        renderLabel(lineEnd, vahPrice, str.tostring(vahPrice, format.mintick),
+             color.new(vp_vahColor,   89), label.style_label_left, vp_vahColor, labelSz, "Value Area High")
+        renderLabel(lineEnd, pocPrice, str.tostring(pocPrice, format.mintick),
+             color.new(vp_pocColor,   89), label.style_label_left, vp_pocColor, labelSz, "Point of Control")
+        renderLabel(lineEnd, valPrice, str.tostring(valPrice, format.mintick),
+             color.new(vp_valColor,   89), label.style_label_left, vp_valColor, labelSz, "Value Area Low")
+        renderLabel(lineEnd, vpLo,    str.tostring(vpLo,    format.mintick),
+             color.new(chart.fg_color, 89), label.style_label_up, chart.fg_color, labelSz, "Profile Low")
+
+    // ─────────────────────────────────────────────────────────────────
+    //  RENDER:  DELTA FLOW PROFILE
+    // ─────────────────────────────────────────────────────────────────
+    if dfpPSTP > 0
+        float dfpVtMx = dfpVST.max()
+        float dfpVdMx = 0.
+
+        // Build delta magnitude array
+        for l = 0 to dfp_numRows - 1
+            float bbp = 2. * dfpVSB.get(l) - dfpVST.get(l)
+            dfpVSD.set(l, math.abs(bbp))
+            dfpVdMx := math.max(dfpVdMx, math.abs(bbp))
+
+        for l = 0 to dfp_numRows - 1
+            float vtLV = dfpVST.get(l)
+            float LpM  = dfpVtMx > 0 ? vtLV / dfpVtMx : 0.
+            float DpM  = dfpVdMx > 0 ? dfpVSD.get(l) / dfpVdMx : 0.
+            float bbp  = 2. * dfpVSB.get(l) - vtLV
+
+            // Money flow (normalized bars) — placed to the right of the VP
+            if dfp_moneyShow and dfp_normalized and dfpBoxes.size() < 480
+                color mfC = color.from_gradient(LpM, 0, 1, color.new(dfp_moneyColor, 93), color.new(dfp_moneyColor, 53))
+                int sBI = db.i + int(4 * dfpLookback * dfp_profWidth / 3)
+                dfpBoxes.push(box.new(
+                     sBI + 1 + dfp_hOffset,
+                     dfpLo + (l + 0.03) * dfpPSTP,
+                     sBI + int(dfpLookback * dfp_profWidth / 3) + 3 + dfp_hOffset,
+                     dfpLo + (l + 0.97) * dfpPSTP,
+                     color(na), bgcolor=mfC))
+                int sBI2 = sBI + int(dfpLookback * dfp_profWidth / 3) + 3 + dfp_hOffset
+                int eBI2 = sBI2 - int(LpM * (int(dfpLookback * dfp_profWidth / 3) + 2))
+                color mfC2 = color.from_gradient(LpM, 0, 1,
+                     color.new(dfp_moneyColor, 53), color.new(chart.fg_color, 13))
+                dfpBoxes.push(box.new(sBI2, dfpLo + (l + 0.1) * dfpPSTP,
+                                      eBI2, dfpLo + (l + 0.9) * dfpPSTP,
+                                      color(na), bgcolor=mfC2,
+                                      text = dfp_labelSz != "None" ? f_pct(LpM) : "",
+                                      text_color = LpM == 1 ? color.blue : LpM > 0.5 ? chart.bg_color : chart.fg_color,
+                                      text_halign = text.align_right,
+                                      text_size = LpM == 1 ? size.small : size.tiny))
+
+            // Delta bars (bull/bear split)
+            if dfp_deltaShow and dfpBoxes.size() < 480
+                int sBI3  = dfpSI
+                int eBI3  = sBI3 + int(DpM * dfpLookback * dfp_profWidth)
+                color dC  = bbp > 0 ?
+                     color.from_gradient(DpM, 0, 1, color.new(dfp_bullColor, 80), color.new(dfp_bullColor, 20)) :
+                     color.from_gradient(DpM, 0, 1, color.new(dfp_bearColor, 80), color.new(dfp_bearColor, 20))
+                dfpBoxes.push(box.new(sBI3 + 1, dfpLo + (l + 0.1) * dfpPSTP,
+                                      eBI3 + 1, dfpLo + (l + 0.9) * dfpPSTP,
+                                      color(na), bgcolor=dC,
+                                      text = dfp_labelSz != "None" ?
+                                             f_fmtV(bbp) + (dfp_showCcy ? " " + syminfo.currency : "") : "",
+                                      text_halign = text.align_left,
+                                      text_color = chart.fg_color,
+                                      text_size = dfpLblSz))
+
+        // DFP Level of Significance (POC)
+        if dfp_pocShow
+            if dfp_pocType == "Developing"
+                dfpPocPoly := polyline.new(dfpPocPts, false, false,
+                     xloc.bar_index, dfp_pocColor, color(na), line.style_solid, 2)
+            else
+                int dfpPocLvl = dfpVST.indexof(dfpVtMx)
+                float dfpPocP = dfpLo + (dfpPocLvl + 0.5) * dfpPSTP
+                renderLine(dfpSI, dfpPocP,
+                     db.i + int(4 * dfpLookback * dfp_profWidth / 3) + dfp_hOffset,
+                     dfpPocP, xloc.bar_index, extend.none, dfp_pocColor, line.style_solid, 2)
+
+        if dfp_moneyShow
+            dfpLines.push(line.new(
+                 db.i + int(4 * dfpLookback * dfp_profWidth / 3) + 1 + dfp_hOffset, dfpLo,
+                 db.i + int(4 * dfpLookback * dfp_profWidth / 3) + 1 + dfp_hOffset, dfpHi,
+                 color=dfp_moneyColor, width=2))
+            if dfp_normalized
+                dfpLines.push(line.new(
+                     db.i + int(5 * dfpLookback * dfp_profWidth / 3) + 3 + dfp_hOffset, dfpLo,
+                     db.i + int(5 * dfpLookback * dfp_profWidth / 3) + 3 + dfp_hOffset, dfpHi,
+                     color=dfp_moneyColor, width=2))
+
+        if dfp_priceLevels
+            renderLabel(dfp_moneyShow ? db.i + int(4 * dfpLookback * dfp_profWidth / 3) + 1 + dfp_hOffset : db.i,
+                 dfpHi, "High · " + str.tostring(dfpHi, format.mintick),
+                 color.new(dfp_moneyColor, 89), label.style_label_down, dfp_moneyColor, dfpLblSz, "Delta Profile High")
+            renderLabel(dfp_moneyShow ? db.i + int(4 * dfpLookback * dfp_profWidth / 3) + 1 + dfp_hOffset : db.i,
+                 dfpLo, "Low · " + str.tostring(dfpLo, format.mintick),
+                 color.new(dfp_moneyColor, 89), label.style_label_up, dfp_moneyColor, dfpLblSz, "Delta Profile Low")
+    // ─────────────────────────────────────────────────────────────────
+    //  HVN / LVN NODE DETECTION  (from Volume Profile with Node Detection)
+    //  Also populates hvn*/lvn* arrays for the key table
+    // ─────────────────────────────────────────────────────────────────
+    float vtMxN = vda.totalVolume.max()
+    float totalV = vda.totalVolume.sum()
+
+    if vn_peaksShow != "None"
+        int peakN = int(vp_numRows * vn_peakNodes)
+        if peakN > 0
+            float[] tempPeak = vda.totalVolume.copy()
+            for _ = 1 to peakN
+                tempPeak.unshift(0.)
+                tempPeak.push(0.)
+
+            for lvl = 2 * peakN to vp_numRows - 1 + 2 * peakN
+                bool upperOk = true
+                bool lowerOk = true
+
+                for cn = lvl - 2 * peakN to lvl - peakN - 1
+                    if tempPeak.get(lvl - peakN) <= tempPeak.get(cn)
+                        upperOk := false
+                        break
+
+                for cn = lvl - peakN + 1 to lvl
+                    if tempPeak.get(lvl - peakN) <= tempPeak.get(cn)
+                        lowerOk := false
+                        break
+
+                float peakV = tempPeak.get(lvl - peakN)
+                if upperOk and lowerOk and vtMxN > 0 and peakV / vtMxN > vn_threshold
+
+                    int realRow = lvl - 2 * peakN
+                    float nodePrice = vpLo + (realRow + 0.5) * priceStep
+                    float nodeVolPct = totalV > 0 ? vda.totalVolume.get(realRow) / totalV : 0.
+                    float bullV2 = vda.bullVolume.get(realRow)
+                    float totV2  = vda.totalVolume.get(realRow)
+                    float nodeDeltaPct = totV2 > 0 ? (2. * bullV2 - totV2) / totV2 : 0.
+                    bool  nodeBullBias = bullV2 >= totV2 / 2.
+
+                    hvnPrice.push(nodePrice)
+                    hvnVolPct.push(nodeVolPct)
+                    hvnDeltaPct.push(nodeDeltaPct)
+                    hvnBullBias.push(nodeBullBias)
+
+                    if VP.boxes.size() < 490
+                        int sVN = placementRight ? VP.startIndex : vda.endProfileIndex.get(realRow)
+                        int eVN = placementRight ? vda.endProfileIndex.get(realRow) : last_bar_index
+                        color hvnC = vn_peaksShow == "Peaks" ? vn_peakColor :
+                             color.from_gradient(peakV / vtMxN, 0, 1,
+                                  color.new(vn_peakColor, 95), color.new(vn_peakColor, 65))
+                        VP.boxes.push(box.new(sVN, vpLo + (realRow + 0.1) * priceStep,
+                                              eVN, vpLo + (realRow + 0.9) * priceStep,
+                                              color(na), bgcolor=hvnC))
+
+            tempPeak.clear()
+
+    if vn_troughsShow != "None"
+        int troughN = int(vp_numRows * vn_troughNodes)
+        if troughN > 0
+            float[] tempTrough = vda.totalVolume.copy()
+            for _ = 1 to troughN
+                tempTrough.unshift(vtMxN)
+                tempTrough.push(vtMxN)
+
+            for lvl = 2 * troughN to vp_numRows - 1 + 2 * troughN
+                bool upperOk = true
+                bool lowerOk = true
+
+                for cn = lvl - 2 * troughN to lvl - troughN - 1
+                    if tempTrough.get(lvl - troughN) >= tempTrough.get(cn)
+                        upperOk := false
+                        break
+
+                for cn = lvl - troughN + 1 to lvl
+                    if tempTrough.get(lvl - troughN) >= tempTrough.get(cn)
+                        lowerOk := false
+                        break
+
+                float troughV = tempTrough.get(lvl - troughN)
+                if upperOk and lowerOk and vtMxN > 0 and troughV / vtMxN > vn_threshold
+
+                    int realRow = lvl - 2 * troughN
+                    float nodePrice = vpLo + (realRow + 0.5) * priceStep
+                    float nodeVolPct = totalV > 0 ? vda.totalVolume.get(realRow) / totalV : 0.
+                    float bullV2 = vda.bullVolume.get(realRow)
+                    float totV2  = vda.totalVolume.get(realRow)
+                    float nodeDeltaPct = totV2 > 0 ? (2. * bullV2 - totV2) / totV2 : 0.
+                    bool  nodeBullBias = bullV2 >= totV2 / 2.
+
+                    lvnPrice.push(nodePrice)
+                    lvnVolPct.push(nodeVolPct)
+                    lvnDeltaPct.push(nodeDeltaPct)
+                    lvnBullBias.push(nodeBullBias)
+
+                    if VP.boxes.size() < 490
+                        int sVN = placementRight ? VP.startIndex : vda.endProfileIndex.get(realRow)
+                        int eVN = placementRight ? vda.endProfileIndex.get(realRow) : last_bar_index
+                        color lvnC = vn_troughsShow == "Troughs" ? vn_troughColor :
+                             color.from_gradient(troughV / vtMxN, 0, 1,
+                                  color.new(vn_troughColor, 95), color.new(vn_troughColor, 31))
+                        VP.boxes.push(box.new(sVN, vpLo + (realRow + 0.1) * priceStep,
+                                              eVN, vpLo + (realRow + 0.9) * priceStep,
+                                              color(na), bgcolor=lvnC))
+
+            tempTrough.clear()
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  KEY LEGEND TABLE  (bottom-left, always updated at islast)
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Columns:  Level | Price | Vol% | Δ% | Bias
+//  Rows:     Header → POC → VAH → VAL → [HVNs] → [LVNs] → Zone
+// ═══════════════════════════════════════════════════════════════════════════════
+
+int hvnCount    = hvnPrice.size()
+int lvnCount    = lvnPrice.size()
+int topHVN      = math.min(vn_topN,    hvnCount)
+int topLVN      = math.min(vn_topNLVN, lvnCount)
+
+// Total rows: 1 header + 3 key levels + 1 hvn section header + topHVN
+//           + 1 lvn section header + topLVN + 1 zone row + 1 delta bias row
+int totalRows = 1 + 3 + 1 + topHVN + 1 + topLVN + 1 + 1
+
+var table keyTbl = table.new(position.bottom_left, 5, 30,
+     bgcolor      = color.new(color.black, 70),
+     frame_color  = color.new(color.white, 30),
+     frame_width  = 1,
+     border_color = color.new(color.gray, 60),
+     border_width = 1)
+
+if barstate.islast and key_show
+
+    // ── Common colours ───────────────────────────────────────────────
+    color hdr_bg  = color.new(#1a1a3a, 20)
+    color sec_bg  = color.new(#0d0d1a, 40)
+    color sbg     = color.new(color.black, 55)
+    color w       = color.white
+    color sg      = color.silver
+
+    // ── Overall delta bias from DFP ──────────────────────────────────
+    float dfpTotalBull = dfpVSB.sum()
+    float dfpTotalAll  = dfpVST.sum()
+    float overallDelta = dfpTotalAll > 0 ? (2. * dfpTotalBull - dfpTotalAll) / dfpTotalAll : 0.
+    bool  bullBias     = overallDelta >= 0.
+    color biasCol      = bullBias ? color.lime : color.red
+
+    // ── POC / VAH / VAL prices ───────────────────────────────────────
+    float pocP = na(vpLo) or na(priceStep) ? na : vpLo + (VP.pocLevel + 0.5) * priceStep
+    float vahP = na(vpLo) or na(priceStep) ? na : vpLo + (VP.vahLevel + 1.0) * priceStep
+    float valP = na(vpLo) or na(priceStep) ? na : vpLo + (VP.valLevel + 0.0) * priceStep
+
+    float pocBullV = not na(pocP) and VP.pocLevel >= 0 ? vda.bullVolume.get(VP.pocLevel) : 0.
+    float pocTotV  = not na(pocP) and VP.pocLevel >= 0 ? vda.totalVolume.get(VP.pocLevel) : 0.
+    float pocDelta = pocTotV > 0 ? (2. * pocBullV - pocTotV) / pocTotV : 0.
+
+    // ── Zone: above VAH / in VA / below VAL ─────────────────────────
+    string zoneTxt = not na(vahP) and close > vahP ? "ABOVE VAH ▲" :
+                     not na(valP) and close < valP ? "BELOW VAL ▼" :
+                     not na(vahP)                  ? "In Value Area" : "—"
+    color  zoneCol = not na(vahP) and close > vahP ? color.lime :
+                     not na(valP) and close < valP ? color.red  : color.gray
+
+    int r = 0  // row counter
+
+    // ── HEADER ───────────────────────────────────────────────────────
+    table.cell(keyTbl, 0, r, "KEY LEVELS",  text_color=w,  text_size=size.small, bgcolor=hdr_bg, text_halign=text.align_center)
+    table.cell(keyTbl, 1, r, "Price",       text_color=sg, text_size=size.tiny,  bgcolor=hdr_bg)
+    table.cell(keyTbl, 2, r, "Vol%",        text_color=sg, text_size=size.tiny,  bgcolor=hdr_bg)
+    table.cell(keyTbl, 3, r, "Δ%",          text_color=sg, text_size=size.tiny,  bgcolor=hdr_bg)
+    table.cell(keyTbl, 4, r, "Bias",        text_color=sg, text_size=size.tiny,  bgcolor=hdr_bg)
+    r += 1
+
+    // ── POC ──────────────────────────────────────────────────────────
+    float pocVolPct = not na(pocP) and vda.totalVolume.sum() > 0 ?
+         vda.totalVolume.get(VP.pocLevel) / vda.totalVolume.sum() : 0.
+    table.cell(keyTbl, 0, r, "POC",          text_color=vp_pocColor, text_size=size.tiny, bgcolor=sbg)
+    table.cell(keyTbl, 1, r, not na(pocP) ? str.tostring(pocP, format.mintick) : "—",
+                              text_color=vp_pocColor, text_size=size.tiny, bgcolor=sbg)
+    table.cell(keyTbl, 2, r, key_showVolPct ? f_pct(pocVolPct) : "—",
+                              text_color=sg, text_size=size.tiny, bgcolor=sbg)
+    table.cell(keyTbl, 3, r, key_showDelta  ? (pocDelta >= 0 ? "+" : "") + f_pct(pocDelta) : "—",
+                              text_color=pocDelta >= 0 ? color.lime : color.red, text_size=size.tiny, bgcolor=sbg)
+    table.cell(keyTbl, 4, r, pocDelta >= 0 ? "▲ Bull" : "▼ Bear",
+                              text_color=pocDelta >= 0 ? color.lime : color.red, text_size=size.tiny, bgcolor=sbg)
+    r += 1
+
+    // ── VAH ──────────────────────────────────────────────────────────
+    float vahVolPct = not na(vahP) and vda.totalVolume.sum() > 0 ?
+         vda.totalVolume.get(VP.vahLevel) / vda.totalVolume.sum() : 0.
+    float vahBullV  = not na(vahP) ? vda.bullVolume.get(VP.vahLevel) : 0.
+    float vahTotV   = not na(vahP) ? vda.totalVolume.get(VP.vahLevel) : 0.
+    float vahDelta  = vahTotV > 0 ? (2. * vahBullV - vahTotV) / vahTotV : 0.
+    table.cell(keyTbl, 0, r, "VAH",  text_color=vp_vahColor, text_size=size.tiny, bgcolor=sbg)
+    table.cell(keyTbl, 1, r, not na(vahP) ? str.tostring(vahP, format.mintick) : "—",
+                              text_color=vp_vahColor, text_size=size.tiny, bgcolor=sbg)
+    table.cell(keyTbl, 2, r, key_showVolPct ? f_pct(vahVolPct) : "—",
+                              text_color=sg, text_size=size.tiny, bgcolor=sbg)
+    table.cell(keyTbl, 3, r, key_showDelta  ? (vahDelta >= 0 ? "+" : "") + f_pct(vahDelta) : "—",
+                              text_color=vahDelta >= 0 ? color.lime : color.red, text_size=size.tiny, bgcolor=sbg)
+    table.cell(keyTbl, 4, r, vahDelta >= 0 ? "▲" : "▼",
+                              text_color=vahDelta >= 0 ? color.lime : color.red, text_size=size.tiny, bgcolor=sbg)
+    r += 1
+
+    // ── VAL ──────────────────────────────────────────────────────────
+    float valVolPct = not na(valP) and vda.totalVolume.sum() > 0 ?
+         vda.totalVolume.get(VP.valLevel) / vda.totalVolume.sum() : 0.
+    float valBullV  = not na(valP) ? vda.bullVolume.get(VP.valLevel) : 0.
+    float valTotV   = not na(valP) ? vda.totalVolume.get(VP.valLevel) : 0.
+    float valDelta  = valTotV > 0 ? (2. * valBullV - valTotV) / valTotV : 0.
+    table.cell(keyTbl, 0, r, "VAL",  text_color=vp_valColor, text_size=size.tiny, bgcolor=sbg)
+    table.cell(keyTbl, 1, r, not na(valP) ? str.tostring(valP, format.mintick) : "—",
+                              text_color=vp_valColor, text_size=size.tiny, bgcolor=sbg)
+    table.cell(keyTbl, 2, r, key_showVolPct ? f_pct(valVolPct) : "—",
+                              text_color=sg, text_size=size.tiny, bgcolor=sbg)
+    table.cell(keyTbl, 3, r, key_showDelta  ? (valDelta >= 0 ? "+" : "") + f_pct(valDelta) : "—",
+                              text_color=valDelta >= 0 ? color.lime : color.red, text_size=size.tiny, bgcolor=sbg)
+    table.cell(keyTbl, 4, r, valDelta >= 0 ? "▲" : "▼",
+                              text_color=valDelta >= 0 ? color.lime : color.red, text_size=size.tiny, bgcolor=sbg)
+    r += 1
+
+    // ── HVN SECTION HEADER ───────────────────────────────────────────
+    table.cell(keyTbl, 0, r, "── HVN ──", text_color=color.new(vn_peakColor, 0), text_size=size.tiny, bgcolor=sec_bg, text_halign=text.align_center)
+    table.cell(keyTbl, 1, r, "High Vol Node", text_color=sg,    text_size=size.tiny, bgcolor=sec_bg)
+    table.cell(keyTbl, 2, r, "Vol%",          text_color=sg,    text_size=size.tiny, bgcolor=sec_bg)
+    table.cell(keyTbl, 3, r, "Δ%",            text_color=sg,    text_size=size.tiny, bgcolor=sec_bg)
+    table.cell(keyTbl, 4, r, "Bias",          text_color=sg,    text_size=size.tiny, bgcolor=sec_bg)
+    r += 1
+
+    // ── HVN ROWS ─────────────────────────────────────────────────────
+    // Sort HVNs by volume% descending for the top-N display
+    if topHVN > 0
+        // Simple insertion sort on hvnVolPct (descending)
+        for i = 1 to hvnCount - 1
+            float kP  = hvnPrice.get(i)
+            float kV  = hvnVolPct.get(i)
+            float kD  = hvnDeltaPct.get(i)
+            bool  kB  = hvnBullBias.get(i)
+            int   j   = i - 1
+            while j >= 0 and hvnVolPct.get(j) < kV
+                hvnPrice.set(j + 1,    hvnPrice.get(j))
+                hvnVolPct.set(j + 1,   hvnVolPct.get(j))
+                hvnDeltaPct.set(j + 1, hvnDeltaPct.get(j))
+                hvnBullBias.set(j + 1, hvnBullBias.get(j))
+                j -= 1
+            hvnPrice.set(j + 1,    kP)
+            hvnVolPct.set(j + 1,   kV)
+            hvnDeltaPct.set(j + 1, kD)
+            hvnBullBias.set(j + 1, kB)
+
+        for n = 0 to topHVN - 1
+            float hp  = hvnPrice.get(n)
+            float hv  = hvnVolPct.get(n)
+            float hd  = hvnDeltaPct.get(n)
+            bool  hb  = hvnBullBias.get(n)
+            color hc  = hb ? color.new(color.lime, 20) : color.new(color.red, 20)
+            table.cell(keyTbl, 0, r, "HVN " + str.tostring(n + 1),
+                 text_color=color.new(vn_peakColor, 0), text_size=size.tiny, bgcolor=sbg)
+            table.cell(keyTbl, 1, r, str.tostring(hp, format.mintick),
+                 text_color=w, text_size=size.tiny, bgcolor=sbg)
+            table.cell(keyTbl, 2, r, key_showVolPct ? f_pct(hv) : "—",
+                 text_color=sg, text_size=size.tiny, bgcolor=sbg)
+            table.cell(keyTbl, 3, r, key_showDelta ? (hd >= 0 ? "+" : "") + f_pct(hd) : "—",
+                 text_color=hd >= 0 ? color.lime : color.red, text_size=size.tiny, bgcolor=sbg)
+            table.cell(keyTbl, 4, r, hb ? "▲ Bull" : "▼ Bear",
+                 text_color=hb ? color.lime : color.red, text_size=size.tiny, bgcolor=color.new(hc, 55))
+            r += 1
+    else
+        table.cell(keyTbl, 0, r, "None detected", text_color=color.gray, text_size=size.tiny, bgcolor=sbg)
+        table.cell(keyTbl, 1, r, "—", text_color=color.gray, text_size=size.tiny, bgcolor=sbg)
+        table.cell(keyTbl, 2, r, "—", text_color=color.gray, text_size=size.tiny, bgcolor=sbg)
+        table.cell(keyTbl, 3, r, "—", text_color=color.gray, text_size=size.tiny, bgcolor=sbg)
+        table.cell(keyTbl, 4, r, "—", text_color=color.gray, text_size=size.tiny, bgcolor=sbg)
+        r += 1
+
+    // ── LVN SECTION HEADER ───────────────────────────────────────────
+    table.cell(keyTbl, 0, r, "── LVN ──", text_color=color.new(vn_troughColor, 0), text_size=size.tiny, bgcolor=sec_bg, text_halign=text.align_center)
+    table.cell(keyTbl, 1, r, "Low Vol Node",  text_color=sg, text_size=size.tiny, bgcolor=sec_bg)
+    table.cell(keyTbl, 2, r, "Vol%",          text_color=sg, text_size=size.tiny, bgcolor=sec_bg)
+    table.cell(keyTbl, 3, r, "Δ%",            text_color=sg, text_size=size.tiny, bgcolor=sec_bg)
+    table.cell(keyTbl, 4, r, "Bias",          text_color=sg, text_size=size.tiny, bgcolor=sec_bg)
+    r += 1
+
+    // ── LVN ROWS ─────────────────────────────────────────────────────
+    if topLVN > 0
+        for n = 0 to topLVN - 1
+            float lp  = lvnPrice.get(n)
+            float lv  = lvnVolPct.get(n)
+            float ld  = lvnDeltaPct.get(n)
+            bool  lb  = lvnBullBias.get(n)
+            table.cell(keyTbl, 0, r, "LVN " + str.tostring(n + 1),
+                 text_color=color.new(vn_troughColor, 0), text_size=size.tiny, bgcolor=sbg)
+            table.cell(keyTbl, 1, r, str.tostring(lp, format.mintick),
+                 text_color=w, text_size=size.tiny, bgcolor=sbg)
+            table.cell(keyTbl, 2, r, key_showVolPct ? f_pct(lv) : "—",
+                 text_color=sg, text_size=size.tiny, bgcolor=sbg)
+            table.cell(keyTbl, 3, r, key_showDelta ? (ld >= 0 ? "+" : "") + f_pct(ld) : "—",
+                 text_color=ld >= 0 ? color.lime : color.red, text_size=size.tiny, bgcolor=sbg)
+            table.cell(keyTbl, 4, r, lb ? "▲ Bull" : "▼ Bear",
+                 text_color=lb ? color.lime : color.red, text_size=size.tiny, bgcolor=sbg)
+            r += 1
+    else
+        table.cell(keyTbl, 0, r, "None detected", text_color=color.gray, text_size=size.tiny, bgcolor=sbg)
+        table.cell(keyTbl, 1, r, "—", text_color=color.gray, text_size=size.tiny, bgcolor=sbg)
+        table.cell(keyTbl, 2, r, "—", text_color=color.gray, text_size=size.tiny, bgcolor=sbg)
+        table.cell(keyTbl, 3, r, "—", text_color=color.gray, text_size=size.tiny, bgcolor=sbg)
+        table.cell(keyTbl, 4, r, "—", text_color=color.gray, text_size=size.tiny, bgcolor=sbg)
+        r += 1
+
+    // ── ZONE + OVERALL DELTA BIAS ─────────────────────────────────────
+    table.cell(keyTbl, 0, r, "Zone",    text_color=sg,      text_size=size.tiny, bgcolor=sec_bg)
+    table.cell(keyTbl, 1, r, zoneTxt,   text_color=zoneCol, text_size=size.tiny, bgcolor=sec_bg)
+    table.cell(keyTbl, 2, r, "Δ Bias",  text_color=sg,      text_size=size.tiny, bgcolor=sec_bg)
+    table.cell(keyTbl, 3, r, (overallDelta >= 0 ? "+" : "") + f_pct(overallDelta),
+                              text_color=biasCol, text_size=size.tiny, bgcolor=sec_bg)
+    table.cell(keyTbl, 4, r, bullBias ? "▲ BULL" : "▼ BEAR",
+                              text_color=biasCol, text_size=size.small, bgcolor=color.new(biasCol, 70))
+
