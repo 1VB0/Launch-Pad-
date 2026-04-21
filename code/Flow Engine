@@ -1,0 +1,862 @@
+// This Pine Script® code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
+// © NoiseInfluence 
+
+// © Composite: FLowEngine
+//@version=6
+indicator("FLowEngine [Pro]",
+     overlay          = true,
+     max_bars_back     = 1500,
+     max_boxes_count   = 500,
+     max_lines_count   = 500,
+     max_labels_count  = 500,
+     dynamic_requests  = true)
+
+//══════════════════════════════════════════════════════════════════════
+// ① DELTA FLOW PROFILE — MACRO + HVN/LVN NODE LINES
+//══════════════════════════════════════════════════════════════════════
+gDFP  = '① Δ Flow Profile  —  Macro'
+disp  = display.all - display.status_line
+
+vpSH  = input.bool(true,  'Money Flow Profile',  inline='mfp', group=gDFP, display=disp)
+mfpC  = input.color(color.new(#5288C4,0), '',    inline='mfp', group=gDFP)
+npSH  = input.bool(true,  'Normalized',           inline='mfp', group=gDFP, display=disp)
+spSH  = input.bool(true,  'Delta Profile',                      group=gDFP)
+spPTY = input.string('Bar Polarity', 'Polarity Method',
+     options=['Bar Polarity','Bar Buying/Selling Pressure'], group=gDFP, display=disp)
+spBLC = input.color(color.new(#5288C4,0), '', inline='pm', group=gDFP)
+spBRC = input.color(color.new(#f7525f,0), '', inline='pm', group=gDFP)
+pcSH  = input.bool(true,  'Level of Significance', inline='PoC', group=gDFP, display=disp)
+rpPC  = input.string('Developing', '', options=['Developing','Level','Row'], inline='PoC', group=gDFP, display=disp)
+vpHVC = input.color(color.new(#f23645,25), '', inline='PoC', group=gDFP)
+rpLNi = input.int(360,  'Lookback Length', minval=10, maxval=1500, step=10, group=gDFP, display=disp)
+rpNR  = input.int(25,   'Number of Rows',  minval=10, maxval=100,  step=5,  group=gDFP, display=disp)
+rpW   = input.int(17,   'Profile Width %', minval=10, maxval=50,            group=gDFP, display=disp) / 100
+vpHO  = input.int(13,   'H Offset',                                         group=gDFP, display=disp)
+vpLS  = input.string('Tiny', 'Profile Text', options=['Auto','Tiny','Small','None'], inline='txt', group=gDFP, display=disp)
+vpLC  = input.bool(false, 'Ccy', inline='txt', group=gDFP)
+rpPL  = input.bool(false, 'Price Levels', inline='BBe', group=gDFP)
+rpLS  = input.string('Small', '', options=['Tiny','Small','Normal'], inline='BBe', group=gDFP, display=disp)
+vnShow   = input.bool(true, 'HVN/LVN Node Lines', group=gDFP,
+     tooltip='Horizontal lines at High/Low Volume Nodes. Toggle per-node lines below.')
+hvnC     = input.color(color.new(#2962ff,25), 'HVN', inline='vn', group=gDFP)
+lvnC     = input.color(color.new(color.gray,50), 'LVN', inline='vn', group=gDFP)
+vnPct    = input.int(9, 'Node Detect %', minval=1, maxval=50, group=gDFP, display=disp) / 100
+vnExtend = input.bool(false, 'Extend Node Lines Right', group=gDFP)
+
+//══════════════════════════════════════════════════════════════════════
+// ② AWESOME OSCILLATOR
+//══════════════════════════════════════════════════════════════════════
+gAO    = '② Awesome Oscillator  —  Encapsulated'
+aoShow = input.bool(true, 'Enable AO Signal', group=gAO)
+aoSlow = input.int(34, 'Slow', minval=1, group=gAO)
+aoFast = input.int(5,  'Fast', minval=1, group=gAO)
+
+//══════════════════════════════════════════════════════════════════════
+// ③ CVD + OI
+//══════════════════════════════════════════════════════════════════════
+gCVD     = '③ CVD + OI  —  Encapsulated'
+cvdShow  = input.bool(true, 'Enable CVD/OI Signal', group=gCVD)
+ltfTF    = input.timeframe('1', 'Lower TF', group=gCVD)
+cvdLk    = input.int(14, 'CVD Lookback', minval=3, group=gCVD)
+binance  = input.bool(true, 'Binance USDT.P', inline='s1', group=gCVD)
+binance2 = input.bool(true, 'Binance USD.P',  inline='s1', group=gCVD)
+bitmex   = input.bool(true, 'BitMEX USD.P',   inline='s2', group=gCVD)
+bitmex2  = input.bool(true, 'BitMEX USDT.P',  inline='s2', group=gCVD)
+
+//══════════════════════════════════════════════════════════════════════
+// ④ SESSION VOLUME PROFILE
+//══════════════════════════════════════════════════════════════════════
+gSVP     = '④ Session VP  —  Encapsulated'
+svpShow  = input.bool(true,   'Enable Session VP', group=gSVP)
+svpTF    = input.timeframe('D','Session TF',        group=gSVP)
+svpRows  = input.int(24,   'Row Size (ticks)', minval=1,   group=gSVP)
+svpVAPct = input.float(70., 'Value Area %',    minval=1,   maxval=100, group=gSVP)
+svpSess  = input.int(2,    'Past Sessions',    minval=1,   maxval=5,   group=gSVP)
+svpRoff  = input.int(5,    'Right Offset Bars',             group=gSVP)
+cPocC    = input.color(color.orange,              'C-POC', inline='css', group=gSVP)
+cVahC    = input.color(color.new(#7B50F3,0),      'C-VAH', inline='css', group=gSVP)
+cValC    = input.color(color.new(#6B30DA,0),      'C-VAL', inline='css', group=gSVP)
+pPocC    = input.color(color.red,   'P-POC', inline='pss', group=gSVP)
+pVahC    = input.color(color.gray,  'P-VAH', inline='pss', group=gSVP)
+pValC    = input.color(color.gray,  'P-VAL', inline='pss', group=gSVP)
+showPDH  = input.bool(true, 'PDH/PDL', inline='h1', group=gSVP)
+pdHC     = input.color(color.green, '', inline='h1', group=gSVP)
+pdLC     = input.color(color.red,   '', inline='h1', group=gSVP)
+showPWH  = input.bool(true, 'PWH/PWL', inline='h2', group=gSVP)
+pwHC     = input.color(color.teal,   '', inline='h2', group=gSVP)
+pwLC     = input.color(color.maroon, '', inline='h2', group=gSVP)
+
+//══════════════════════════════════════════════════════════════════════
+// ⑤ FOOTPRINT IMBALANCE
+//══════════════════════════════════════════════════════════════════════
+gFP      = '⑤ Footprint Δ Imbalance  —  Encapsulated'
+fpShow   = input.bool(true, 'Enable Imbalance Arrows', group=gFP)
+fpThresh = input.float(0.25, 'Imbalance Threshold', minval=0.05, maxval=1., step=0.05, group=gFP)
+fpBullC  = input.color(color.new(color.lime,10), 'Bull ▲', inline='fpc', group=gFP)
+fpBearC  = input.color(color.new(color.red, 10), 'Bear ▼', inline='fpc', group=gFP)
+fpAccShow = input.bool(true, 'ΣΔ Accumulation Display', group=gFP)
+
+//══════════════════════════════════════════════════════════════════════
+// ⑦ MARKET TRANSLATION ENGINE (INEFFICIENCY STATE)
+//══════════════════════════════════════════════════════════════════════
+gMT = '⑦ Market Translation Engine'
+
+mtShow = input.bool(true, 'Enable Translation Panel', group=gMT)
+
+
+
+//══════════════════════════════════════════════════════════════════════
+// ⑥ CONFLUENCE DASHBOARD
+//══════════════════════════════════════════════════════════════════════
+gCF      = '⑥ Confluence Dashboard'
+cfShow   = input.bool(true, 'Show Dashboard', group=gCF)
+cfPos    = input.string('Top Right', 'Position',
+     options=['Top Right','Top Left','Bottom Right','Bottom Left'], group=gCF)
+cfThHigh = input.float(0.67, 'Bull Threshold', minval=0.51, maxval=0.99, step=0.01, group=gCF)
+cfThLow  = input.float(0.33, 'Bear Threshold', minval=0.01, maxval=0.49, step=0.01, group=gCF)
+
+
+
+
+//══════════════════════════════════════════════════════════════════════
+// HELPERS
+//══════════════════════════════════════════════════════════════════════
+type bar
+    float o = open
+    float h = high
+    float l = low
+    float c = close
+    float v = volume
+    int   i = bar_index
+
+f_sz(_t) =>
+    switch _t
+        'Tiny'   => size.tiny
+        'Small'  => size.small
+        'Normal' => size.normal
+        => size.auto
+
+f_gcd(_a, _b) =>
+    int a = math.abs(_a)
+    int b = math.abs(_b)
+    int g = 1
+    if a > 0 and b > 0
+        while b != 0
+            int t = b
+            b    := a % b
+            a    := t
+        g := a
+    g
+
+f_fmtVol(_v) =>
+    float av = math.abs(_v)
+    (
+    av >= 1000000. ? str.tostring(_v / 1000000., '#.0') + 'M' :
+    av >= 1000.    ? str.tostring(_v / 1000.,    '#.0') + 'K' :
+                     str.tostring(math.round(_v, 0), '#')
+    )
+
+f_lineStyle(_s) =>
+    _s == 'Dashed' ? line.style_dashed : _s == 'Dotted' ? line.style_dotted : line.style_solid
+
+//======================================================================
+//INNER FUNCTION 2: moved to top of script ie Global 
+//======================================================================
+
+f_sigC(_sc, _dir) =>
+    _sc == _dir ? color.new(color.lime, 15) : _sc == -_dir ? color.new(color.red, 15) : color.new(color.gray, 30)
+
+f_conf(_m) =>
+    _m ? ' ✓' : ' ✗'
+
+
+
+//══════════════════════════════════════════════════════════════════════
+// DATA REQUESTS
+//══════════════════════════════════════════════════════════════════════
+upDnVol() =>
+    float p = 0.
+    float n = 0.
+    switch
+        close >  open      => p += volume
+        close <  open      => n -= volume
+        close >= close[1]  => p += volume
+        close <  close[1]  => n -= volume
+    [p, n]
+
+[rawUp, rawDn] = request.security_lower_tf(syminfo.tickerid, ltfTF, upDnVol())
+
+mex_ = syminfo.basecurrency == 'BTC' ? 'XBT' : syminfo.basecurrency
+
+[oid1,_] = request.security('BINANCE:' + syminfo.basecurrency + 'USDT.P_OI', timeframe.period, [close - close[1], close], ignore_invalid_symbol=true)
+[oid2,_] = request.security('BINANCE:' + syminfo.basecurrency + 'USD.P_OI',  timeframe.period, [close - close[1], close], ignore_invalid_symbol=true)
+[oid4,_] = request.security('BITMEX:'  + mex_ + 'USD.P_OI',                  timeframe.period, [close - close[1], close], ignore_invalid_symbol=true)
+[oid5,_] = request.security('BITMEX:'  + mex_ + 'USDT.P_OI',                 timeframe.period, [close - close[1], close], ignore_invalid_symbol=true)
+
+aggOIDelta = (binance  ? nz(oid1, 0.)          : 0.) +
+             (binance2 ? nz(oid2, 0.) / close  : 0.) +
+             (bitmex   ? nz(oid4, 0.) / close  : 0.) +
+             (bitmex2  ? nz(oid5, 0.) / close  : 0.)
+
+//══════════════════════════════════════════════════════════════════════
+// DFP STATE
+//══════════════════════════════════════════════════════════════════════
+var b = bar.new()
+nzV   = nz(b.v)
+rpLN  = last_bar_index > rpLNi ? rpLNi - 1 : last_bar_index
+
+var rpVST = array.new_float(rpNR, 0.)
+var rpVSB = array.new_float(rpNR, 0.)
+var rpVSD = array.new_float(rpNR, 0.)
+
+var dRP        = array.new_box()
+var dPR        = array.new_line()
+var pocPoints  = array.new<chart.point>()
+var polyline pocPolyline = na
+var float pLST = na
+var float pHST = na
+var int   sI   = na
+var color llC  = na
+var float dfpBias   = 0.
+var string dfpPhase = 'Calculating...'
+var vnLines = array.new_line()
+
+rpS = f_sz(rpLS)
+vpS = f_sz(vpLS)
+
+bull_dfp = spPTY == 'Bar Polarity' ? b.c > b.o : (b.c - b.l) > (b.h - b.c)
+
+if b.i == last_bar_index - rpLN
+    sI   := b.i
+    pLST := b.l
+    pHST := b.h
+else if b.i > last_bar_index - rpLN
+    pLST := math.min(b.l, pLST)
+    pHST := math.max(b.h, pHST)
+
+pSTP = not na(pHST) and not na(pLST) and rpNR > 0 ? (pHST - pLST) / rpNR : 0.
+
+f_drawLblX(_x, _y, _txt, _sty, _tc, _sz, _tip) =>
+    var lb = label.new(_x, _y, _txt, xloc.bar_index, yloc.price, color(na), _sty, _tc, _sz, text.align_left, _tip)
+    lb.set_xy(_x, _y)
+    lb.set_text(_txt)
+    lb.set_tooltip(_tip)
+    lb.set_textcolor(_tc)
+
+//══════════════════════════════════════════════════════════════════════
+// SESSION VP STATE
+//══════════════════════════════════════════════════════════════════════
+var array<float> svpPBins = array.new_float()
+var array<float> svpVBins = array.new_float()
+float svpTick = syminfo.mintick * svpRows
+
+var int   svpSessT = na
+var float svpSessH = na
+var float svpSessL = na
+var float svpCPoc  = na
+var float svpCVah  = na
+var float svpCVal  = na
+
+var line lCPoc = na
+var line lCVah = na
+var line lCVal = na
+
+var array<float> ppPoc  = array.new_float()
+var array<float> ppVah  = array.new_float()
+var array<float> ppVal  = array.new_float()
+var array<int>   ppTime = array.new_int()
+var array<line>  plPoc  = array.new_line()
+var array<line>  plVah  = array.new_line()
+var array<line>  plVal  = array.new_line()
+
+var float cDH = na
+var float cDL = na
+var float pDH = na
+var float pDL = na
+var float cWH = na
+var float cWL = na
+var float pWH = na
+var float pWL = na
+var int   dSt = na
+var int   wSt = na
+var line  lPDH = na
+var line  lPDL = na
+var line  lPWH = na
+var line  lPWL = na
+
+isNewSess = ta.change(time(svpTF)) != 0 or barstate.isfirst
+isNewDay  = ta.change(time('D'))   != 0 or barstate.isfirst
+isNewWk   = ta.change(time('W'))   != 0 or barstate.isfirst
+
+f_calcSVP() =>
+    float poc = na
+    float vah = na
+    float val = na
+    if array.size(svpVBins) > 0
+        float tgt  = array.sum(svpVBins) * (svpVAPct / 100.)
+        int   pIdx = array.indexof(svpVBins, array.max(svpVBins))
+        poc        := array.get(svpPBins, pIdx)
+        float cVol = array.get(svpVBins, pIdx)
+        int uI     = pIdx
+        int lI     = pIdx
+        while cVol < tgt and (uI < array.size(svpVBins) - 1 or lI > 0)
+            float uV = uI < array.size(svpVBins) - 1 ? array.get(svpVBins, uI + 1) : -1.
+            float lV = lI > 0 ? array.get(svpVBins, lI - 1) : -1.
+            if uV >= lV and uV != -1.
+                uI   += 1
+                cVol += uV
+            else if lV != -1.
+                lI   -= 1
+                cVol += lV
+            else
+                break
+        float p1 = array.get(svpPBins, uI)
+        float p2 = array.get(svpPBins, lI)
+        vah := math.max(p1, p2)
+        val := math.min(p1, p2)
+    [poc, vah, val]
+
+// HTF day tracking
+if isNewDay
+    pDH := cDH
+    pDL := cDL
+    cDH := high
+    cDL := low
+    dSt := time
+else
+    cDH := na(cDH) ? high : math.max(cDH, high)
+    cDL := na(cDL) ? low  : math.min(cDL, low)
+
+// HTF week tracking
+if isNewWk
+    pWH := cWH
+    pWL := cWL
+    cWH := high
+    cWL := low
+    wSt := time
+else
+    cWH := na(cWH) ? high : math.max(cWH, high)
+    cWL := na(cWL) ? low  : math.min(cWL, low)
+
+// Session transitions
+if isNewSess and array.size(svpPBins) > 0
+    [p, h, l] = f_calcSVP()
+    if not na(p)
+        array.push(ppPoc, p)
+        array.push(ppVah, h)
+        array.push(ppVal, l)
+        array.push(ppTime, svpSessT)
+        while array.size(ppPoc) > svpSess
+            array.shift(ppPoc)
+            array.shift(ppVah)
+            array.shift(ppVal)
+            array.shift(ppTime)
+    array.clear(svpPBins)
+    array.clear(svpVBins)
+    svpSessT := time
+    svpSessH := high
+    svpSessL := low
+else if isNewSess
+    svpSessT := time
+    svpSessH := high
+    svpSessL := low
+
+// Accumulate bins
+if svpShow and not na(svpSessT)
+    svpSessH := na(svpSessH) ? high : math.max(svpSessH, high)
+    svpSessL := na(svpSessL) ? low  : math.min(svpSessL, low)
+    float bP = math.round(hlc3 / svpTick) * svpTick
+    int   bX = array.indexof(svpPBins, bP)
+    if bX != -1
+        array.set(svpVBins, bX, array.get(svpVBins, bX) + volume)
+    else
+        array.push(svpPBins, bP)
+        array.push(svpVBins, volume)
+
+// Live session VP values
+if svpShow and array.size(svpVBins) > 0
+    [cp, ch, cl] = f_calcSVP()
+    svpCPoc := cp
+    svpCVah := ch 
+    svpCVal := cl
+
+//══════════════════════════════════════════════════════════════════════
+// AO / CVD / OI / SVP SIGNALS
+//══════════════════════════════════════════════════════════════════════
+aoVal  = ta.sma(hl2, aoFast) - ta.sma(hl2, aoSlow)
+aoBull = aoVal > 0 and aoVal > aoVal[1]
+aoBear = aoVal < 0 and aoVal < aoVal[1]
+aoSc   = aoShow ? (aoBull ? 1 : aoBear ? -1 : 0) : 0
+aoStr  = aoVal > 0 ? 'Bullish' : 'Bearish'
+
+cvdUp  = array.sum(rawUp)
+cvdDn  = array.sum(rawDn)
+cvdNet = cvdUp + cvdDn
+cvdAvg = ta.sma(cvdNet, cvdLk)
+cvdSc  = cvdShow ? (cvdNet > 0 and cvdNet > cvdAvg ? 1 : cvdNet < 0 and cvdNet < cvdAvg ? -1 : 0) : 0
+cvdStr = cvdNet > 0 ? 'Buying' : 'Selling'
+
+oiBullSig = aggOIDelta > 0 and close > close[1]
+oiBearSig = aggOIDelta > 0 and close < close[1]
+oiSc      = cvdShow ? (oiBullSig ? 1 : oiBearSig ? -1 : 0) : 0
+oiStr     = oiBullSig ? 'Long Add' : oiBearSig ? 'Short Add' : 'Flat'
+
+svpSc  = svpShow and not na(svpCPoc) ? (close > svpCPoc ? 1 : close < svpCPoc ? -1 : 0) : 0
+svpStr = not na(svpCPoc) ? (close > svpCPoc ? 'Above POC' : close < svpCPoc ? 'Below POC' : 'At POC') : 'N/A'
+
+//══════════════════════════════════════════════════════════════════════
+// FOOTPRINT IMBALANCE                                                     ----------------------------------------------------------------------------------
+//══════════════════════════════════════════════════════════════════════
+
+
+float fpDelta     = array.sum(rawUp) + array.sum(rawDn)
+float atr14        = ta.atr(14)
+float fpSessRange = not na(svpSessH) and not na(svpSessL) ? math.max(svpSessH - svpSessL, syminfo.mintick) : atr14
+float fpTrigger   = fpSessRange * fpThresh
+
+bool aboveVah = not na(svpCVah) and close > svpCVah
+bool belowVal = not na(svpCVal) and close < svpCVal
+
+bool bearImbal = fpShow and fpDelta >  fpTrigger and belowVal and close < close[1]
+bool bullImbal = fpShow and fpDelta < -fpTrigger and aboveVah and close > close[1]
+
+var float fpDeltaAcc = 0.
+fpDeltaAcc += fpDelta
+
+float atrOff = ta.atr(14) * 0.6
+
+if bearImbal
+    label.new(bar_index, high + atrOff,
+         text      = '▼  Δ+' + f_fmtVol(fpDelta),
+         style     = label.style_label_down,
+         color     = color.new(fpBearC, 60),
+         textcolor = fpBearC,
+         size      = size.small)
+
+if bullImbal
+    label.new(bar_index, low - atrOff,
+         text      = '▲  Δ' + f_fmtVol(fpDelta),
+         style     = label.style_label_up,
+         color     = color.new(fpBullC, 60),
+         textcolor = fpBullC,
+         size      = size.small)
+
+var label fpAccLbl = na
+if fpAccShow and barstate.islast
+    float acc_y  = not na(svpCVal) ? svpCVal - atrOff * 2.5 : low - atrOff * 3.
+    color accCol = fpDeltaAcc > 0 ? color.new(color.lime, 15) : color.new(color.red, 15)
+    color accBg  = fpDeltaAcc > 0 ? color.new(color.lime, 75) : color.new(color.red, 75)
+    string accLine1 = 'ΣΔ Acc:  '  + (fpDeltaAcc > 0 ? '+' : '') + f_fmtVol(fpDeltaAcc)
+    string accLine2 = '\nSession: ' + (fpDelta    > 0 ? '+' : '') + f_fmtVol(fpDelta)
+    string accLine3 = '\nZone: '    + (aboveVah ? 'ABOVE VAH ▲' : (belowVal ? 'BELOW VAL ▼' : 'In Value Area'))
+    string accTxt   = accLine1 + accLine2 + accLine3
+
+    if na(fpAccLbl)
+        // ✅ Use xloc.bar_time so x is anchored to timestamp, not bar index
+        fpAccLbl := label.new(
+             x         = time,
+             y         = acc_y,
+             text      = accTxt,
+             xloc      = xloc.bar_time,       // <-- key change
+             style     = label.style_label_up,
+             color     = accBg,
+             textcolor = accCol,
+             size      = size.small)
+    else
+        // ✅ Set x using time (int), not bar_index
+        label.set_xy(fpAccLbl, time, acc_y)   // time is an int when xloc=bar_time
+        label.set_text(fpAccLbl, accTxt)
+        label.set_textcolor(fpAccLbl, accCol)
+        label.set_color(fpAccLbl, accBg)
+
+
+//==============================================================
+//UPGRADE
+//==============================================================
+// Core price behavior
+bool wickHighReject = high > high[1] and close < high
+bool wickLowReject  = low < low[1] and close > low
+
+bool noFollowThroughBull = close < close[1] and close < open
+bool noFollowThroughBear = close > close[1] and close > open
+
+// Existing zone logic reused
+bool aboveVAH = not na(svpCVah) and close > svpCVah
+bool belowVAL = not na(svpCVal) and close < svpCVal
+
+// Delta + CVD agreement
+bool buyersAggressive = fpDelta > 0 and cvdNet > 0
+bool sellersAggressive = fpDelta < 0 and cvdNet < 0
+
+// FAILURE CONDITIONS (KEY LOGIC YOU DESCRIBED)
+bool bullFailure = buyersAggressive and aboveVAH and (wickHighReject or noFollowThroughBull)
+bool bearFailure = sellersAggressive and belowVAL and (wickLowReject or noFollowThroughBear)
+
+// Inefficiency definition
+bool ineffBull = bullFailure
+bool ineffBear = bearFailure
+
+string mtText =
+     ineffBull ? "SELLER LIQUIDITY GRAB AT HIGHS\nWICKS AT HIGH / CLOSE BACK INSIDE VALUE\nBUYERS AGGRESSIVE BUT NO FOLLOW THROUGH\n➡ INEFFICIENCY (SELL SIDE REJECTION)"
+   : ineffBear ? "BUYER LIQUIDITY GRAB AT LOWS\nWICKS AT LOW / CLOSE BACK INSIDE VALUE\nSELLERS AGGRESSIVE BUT NO FOLLOW THROUGH\n➡ INEFFICIENCY (BUY SIDE REJECTION)"
+   : aboveVAH and buyersAggressive ? "BUYERS IN CONTROL ABOVE VAH\nTREND CONTINUATION RISK (NO FAILURE)"
+   : belowVAL and sellersAggressive ? "SELLERS IN CONTROL BELOW VAL\nDISTRIBUTION ZONE ACTIVE"
+   : "NO CLEAR INEFFICIENCY\nWAIT FOR REJECTION OR BREAK"
+
+// Color state
+color mtCol =
+     ineffBull ? color.red :
+     ineffBear ? color.lime :
+     aboveVAH ? color.orange :
+     belowVAL ? color.orange :
+     color.gray
+
+
+
+//══════════════════════════════════════════════════════════════════════
+// CONFLUENCE TABLE
+//══════════════════════════════════════════════════════════════════════
+tPos_ = cfPos == 'Top Right'    ? position.top_right    : cfPos == 'Top Left'     ? position.top_left     : cfPos == 'Bottom Right' ? position.bottom_right : position.bottom_left
+        
+
+var table cfTbl = table.new(tPos_, 2, 16,
+     bgcolor      = color.new(color.black, 15),
+     frame_color  = color.silver,
+     frame_width  = 2,
+     border_color = color.new(color.gray, 60),
+     border_width = 1)
+
+var table mtTbl = table.new(position.bottom_right, 1, 1,
+     bgcolor=color.new(color.black, 10),
+     frame_color=color.new(color.gray, 60),
+     frame_width=1)
+
+if mtShow and barstate.islast
+    table.cell(
+         mtTbl,
+         0, 0,
+         mtText,
+         text_color = mtCol,
+         text_size  = size.small,
+         bgcolor    = color.new(mtCol, 85)
+    )
+
+//══════════════════════════════════════════════════════════════════════
+// INNER FUNCTION: update or create a line (must be global scope)
+//══════════════════════════════════════════════════════════════════════
+f_updateLine(_ln, _x1, _y, _x2, _c, _w, _s) =>
+    line ln_ = _ln
+    if na(ln_)
+        ln_ := line.new(_x1, _y, _x2, _y, xloc.bar_time,
+             color = _c, width = _w, style = f_lineStyle(_s))
+    else
+        line.set_xy1(ln_, _x1, _y)
+        line.set_xy2(ln_, _x2, _y)
+        line.set_color(ln_, _c)
+    ln_
+
+//══════════════════════════════════════════════════════════════════════
+// MAIN RENDER BLOCK
+//══════════════════════════════════════════════════════════════════════
+if barstate.islast and not na(nzV) and not timeframe.isseconds and rpLN > 0 and pSTP > 0 and nzV > 0
+    
+    // Clear DFP drawings
+    if dRP.size() > 0
+        for i = 0 to dRP.size() - 1
+            box.delete(dRP.shift())
+    if dPR.size() > 0
+        for i = 0 to dPR.size() - 1
+            line.delete(dPR.shift())
+    pocPoints.clear()
+    aPoly = polyline.all
+    if array.size(aPoly) > 0
+        for i = 0 to array.size(aPoly) - 1
+            polyline.delete(aPoly.get(i))
+
+    // Clear volume node lines
+    if vnLines.size() > 0
+        for i = 0 to vnLines.size() - 1
+            line.delete(vnLines.shift())
+
+    // Reset profile arrays each render
+    array.fill(rpVST, 0.)
+    array.fill(rpVSB, 0.)
+    array.fill(rpVSD, 0.)
+
+    // Build DFP arrays
+    for bI = rpLN to 0
+        int l_ = 0
+        for pLL = pLST to pHST - pSTP by pSTP
+            if (b[bI]).h >= pLL and (b[bI]).l < pLL + pSTP
+                float vPOR = 0.
+                if (b[bI]).l >= pLL and (b[bI]).h > pLL + pSTP
+                    vPOR := (pLL + pSTP - (b[bI]).l) / ((b[bI]).h - (b[bI]).l)
+                else if (b[bI]).h <= pLL + pSTP and (b[bI]).l < pLL
+                    vPOR := ((b[bI]).h - pLL) / ((b[bI]).h - (b[bI]).l)
+                else if (b[bI]).l >= pLL and (b[bI]).h <= pLL + pSTP
+                    vPOR := 1.
+                // ✅ Fixed — both .set calls aligned to the same level as the if/else chain above
+                else
+                    vPOR := pSTP / ((b[bI]).h - (b[bI]).l)
+                rpVST.set(l_, rpVST.get(l_) + nzV[bI] * vPOR * (pLST + (l_ + .5) * pSTP))
+                if bull_dfp[bI] and spSH
+                    rpVSB.set(l_, rpVSB.get(l_) + nzV[bI] * vPOR * (pLST + (l_ + .5) * pSTP))
+                l_ += 1
+
+            if pcSH and rpPC == 'Developing' 
+                float maxVal  = rpVST.max()
+                int   maxIdx  = rpVST.indexof(maxVal)
+                float pocPrice = pLST + (maxIdx + .5) * pSTP
+                pocPoints.push(chart.point.from_index((b[bI]).i, pocPrice))
+
+    float vtMX  = rpVST.max()
+    dfpBias    := rpVSB.sum() - (rpVST.sum() - rpVSB.sum())
+    dfpPhase   := dfpBias > 0 ? 'Bullish Flow' : 'Bearish Flow'
+    // DFP first pass: normalized
+    for l_ = 0 to rpNR - 1
+        float vtLV = rpVST.get(l_)
+        float LpM  = vtLV / vtMX
+        float bbp  = 2. * rpVSB.get(l_) - vtLV
+        rpVSD.set(l_, rpVSD.get(l_) + bbp * (bbp > 0 ? 1. : -1.))
+        if vpSH and npSH
+            llC := color.from_gradient(LpM, 0, 1, color.new(mfpC, 93), color.new(mfpC, 53))
+            int sB1 = b.i + int(4 * rpLN * rpW / 3)
+            dRP.push(box.new(sB1 + 1 + vpHO, pLST + (l_ + .03) * pSTP, sB1 + int(rpLN * rpW / 3) + 3 + vpHO, pLST + (l_ + .97) * pSTP, color(na), bgcolor=llC))
+            dPR.push(line.new(sB1 + 1 + vpHO, pLST + l_ * pSTP, sB1 + int(rpLN * rpW / 3) + 3 + vpHO, pLST + l_ * pSTP, color=color.gray, width=2))
+            if l_ == rpNR - 1
+                dPR.push(line.new(sB1 + 1 + vpHO, pLST + (l_ + 1.) * pSTP, sB1 + int(rpLN * rpW / 3) + 3 + vpHO, pLST + (l_ + 1.) * pSTP, color=color.gray, width=2))
+            int sB2 = sB1 + int(rpLN * rpW / 3) + 3 + vpHO
+            int eB2 = sB2 - int(LpM * (int(rpLN * rpW / 3) + 2))
+            llC := color.from_gradient(LpM, 0, 1, color.new(mfpC, 53), color.new(chart.fg_color, 13))
+            dRP.push(box.new(sB2, pLST + (l_ + .1) * pSTP, eB2, pLST + (l_ + .9) * pSTP, color(na), bgcolor=llC,
+                 text        = vpLS != 'None' ? str.tostring(LpM * 100, format.percent) : '',
+                 text_color  = LpM == 1 ? color.blue : LpM > .5 ? chart.bg_color : chart.fg_color,
+                 text_halign = text.align_right,
+                 text_size   = LpM == 1 ? size.small : size.tiny))
+
+    if spSH
+        llC := (2. * rpVSB.sum() - rpVST.sum()) > 0 ? spBLC : spBRC
+        dPR.push(line.new(sI, pLST, sI, pHST, color=llC, width=2))
+
+    if vpSH
+        dPR.push(line.new(b.i + int(4 * rpLN * rpW / 3) + 1 + vpHO, pLST, b.i + int(4 * rpLN * rpW / 3) + 1 + vpHO, pHST, color=mfpC, width=2))
+        if npSH
+            dPR.push(line.new(b.i + int(5 * rpLN * rpW / 3) + 3 + vpHO, pLST, b.i + int(5 * rpLN * rpW / 3) + 3 + vpHO, pHST, color=mfpC, width=2))
+
+    if rpPL
+        f_drawLblX(vpSH ? b.i + int(4 * rpLN * rpW / 3) + 1 + vpHO : b.i, pHST,
+             'High · ' + str.tostring(pHST, format.mintick), label.style_label_down, mfpC, rpS,
+             'Profile High\nTotal Flow: ' + f_fmtVol(rpVST.sum()))
+        f_drawLblX(vpSH ? b.i + int(4 * rpLN * rpW / 3) + 1 + vpHO : b.i, pLST,
+             'Low · ' + str.tostring(pLST, format.mintick), label.style_label_up, mfpC, rpS, 'Profile Low')
+
+    float vdMX = math.max(rpVSD.max(), syminfo.mintick)
+
+    // DFP second pass: main bars + PoC
+    for l_ = 0 to rpNR - 1
+        if dRP.size() < 485
+            float vtLV = rpVST.get(l_)
+            float LpM  = vtLV / vtMX
+            float DpM  = rpVSD.get(l_) / vdMX
+            if vpSH
+                int sB = b.i + int(4 * rpLN * rpW / 3)
+                int eB = sB - int(LpM * rpLN * rpW)
+                llC := color.from_gradient(LpM, 0, 1, color.new(mfpC, 73), color.new(mfpC, 3))
+                dRP.push(box.new(sB + vpHO, pLST + (l_ + .1) * pSTP, eB + vpHO, pLST + (l_ + .9) * pSTP, color(na), bgcolor=llC,
+                     text        = vpLS != 'None' ? str.tostring(array.get(rpVST, l_), format.volume) + (vpLC ? ' ' + syminfo.currency : '') + '(' + str.tostring(math.abs(vtLV / rpVST.sum() * 100), '#.##') + '%)' : '',
+                     text_halign = text.align_right,
+                     text_color  = LpM == 1 ? color.yellow : chart.fg_color,
+                     text_size   = vpS))
+            if spSH
+                int   sB2 = sI
+                int   eB2 = sB2 + int(DpM * rpLN * rpW)
+                float bb2 = 2. * rpVSB.get(l_) - vtLV
+                llC := bb2 > 0 ? color.from_gradient(DpM, 0, 1, color.new(spBLC, 80), color.new(spBLC, 20)) :
+                                  color.from_gradient(DpM, 0, 1, color.new(spBRC, 80), color.new(spBRC, 20))
+                dRP.push(box.new(sB2 + 1, pLST + (l_ + .1) * pSTP, eB2 + 1, pLST + (l_ + .9) * pSTP, color(na), bgcolor=llC,
+                     text        = vpLS != 'None' ? str.tostring(bb2, format.volume) + (vpLC ? ' ' + syminfo.currency : '') : '',
+                     text_halign = text.align_left,
+                     text_color  = chart.fg_color,
+                     text_size   = vpS))
+            if pcSH and LpM == 1.
+                int eB3 = vpSH ? b.i + math.round(rpLN * rpW / 3) + vpHO : b.i
+                if rpPC == 'Row' or rpPC == 'Level'
+                    if spSH
+                        int sB3 = sI + int(DpM * rpLN * rpW)
+                        pocPoints.push(chart.point.from_index(sB3 + 3, pLST + (rpVST.indexof(rpVST.max()) + .5) * pSTP))
+                        pocPoints.push(chart.point.from_index(sB3 + 1, pLST + (rpVST.indexof(rpVST.max()) + .2) * pSTP))
+                        pocPoints.push(chart.point.from_index(sB3 + 3, pLST + (rpVST.indexof(rpVST.max()) + .5) * pSTP))
+                        pocPoints.push(chart.point.from_index(sB3 + 1, pLST + (rpVST.indexof(rpVST.max()) + .8) * pSTP))
+                        pocPoints.push(chart.point.from_index(sB3 + 3, pLST + (rpVST.indexof(rpVST.max()) + .5) * pSTP))
+                    else
+                        pocPoints.push(chart.point.from_index((b[rpLN]).i, pLST + (rpVST.indexof(rpVST.max()) + .5) * pSTP))
+                if vpSH
+                    pocPoints.push(chart.point.from_index(eB3 - 2, pLST + (rpVST.indexof(rpVST.max()) + .5) * pSTP))
+                    pocPoints.push(chart.point.from_index(eB3,     pLST + (rpVST.indexof(rpVST.max()) + .2) * pSTP))
+                    pocPoints.push(chart.point.from_index(eB3 - 2, pLST + (rpVST.indexof(rpVST.max()) + .5) * pSTP))
+                    pocPoints.push(chart.point.from_index(eB3,     pLST + (rpVST.indexof(rpVST.max()) + .8) * pSTP))
+                    pocPoints.push(chart.point.from_index(eB3 - 2, pLST + (rpVST.indexof(rpVST.max()) + .5) * pSTP))
+                else
+                    pocPoints.push(chart.point.from_index(eB3, pLST + (rpVST.indexof(rpVST.max()) + .5) * pSTP))
+                if rpPC == 'Row' or rpPC == 'Level'
+                    pocPolyline := polyline.new(pocPoints, false, false, xloc.bar_index, vpHVC, color(na),
+                         rpPC == 'Level' ? line.style_solid : line.style_dotted,
+                         rpPC == 'Level' ? 2 : 1)
+                if rpPC == 'Row'
+                    dRP.push(box.new(spSH ? sI + int(DpM * rpLN * rpW) + 1 : (b[rpLN]).i,
+                         pLST + (rpVST.indexof(vtMX) + .1) * pSTP, eB3,
+                         pLST + (rpVST.indexof(vtMX) + .9) * pSTP, vpHVC, bgcolor=color.new(vpHVC, 73)))
+
+    if pcSH and rpPC == 'Developing'
+        pocPolyline := polyline.new(pocPoints, false, false, xloc.bar_index, vpHVC, color(na), line.style_solid, 2)
+
+    // HVN / LVN node lines
+    if vnShow and rpNR >= 3
+        float vnThr = rpVST.max() * 0.01
+        int xL = not na(svpCVah) ? sI : (b[rpLN]).i
+        int xR = b.i
+        for vn = 1 to rpNR - 2
+            float vv = rpVST.get(vn)
+            if vv >= vnThr
+                float nl = pLST + (vn + .5) * pSTP
+                if vv > rpVST.get(vn - 1) and vv > rpVST.get(vn + 1)
+                    vnLines.push(line.new(xL, nl, xR, nl,
+                         color  = hvnC,
+                         style  = line.style_dashed,
+                         width  = 1,
+                         extend = vnExtend ? extend.right : extend.none))
+                else if vv < rpVST.get(vn - 1) and vv < rpVST.get(vn + 1)
+                    vnLines.push(line.new(xL, nl, xR, nl,
+                         color  = lvnC,
+                         style  = line.style_dotted,
+                         width  = 1,
+                         extend = vnExtend ? extend.right : extend.none))
+
+    // Session VP lines
+    if svpShow and array.size(svpPBins) > 0
+        int   bDur = math.max(time - time[1], 1)
+        int   extT = time + bDur * svpRoff
+
+        if not na(svpCPoc) and not na(svpSessT)
+            lCPoc := f_updateLine(lCPoc, svpSessT, svpCPoc, extT, cPocC, 2, 'Dashed')
+        if not na(svpCVah) and not na(svpSessT)
+            lCVah := f_updateLine(lCVah, svpSessT, svpCVah, extT, cVahC, 1, 'Dashed')
+        if not na(svpCVal) and not na(svpSessT)
+            lCVal := f_updateLine(lCVal, svpSessT, svpCVal, extT, cValC, 1, 'Dashed')
+
+        for i = 0 to plPoc.size() - 1
+            line.delete(plPoc.get(i))
+        plPoc.clear()
+        plVah.clear()
+        plVal.clear()
+
+        int nP = array.size(ppPoc)
+        if nP > 0
+            for ps = 0 to nP - 1
+                float pv = array.get(ppPoc,  ps)
+                float hv = array.get(ppVah,  ps)
+                float lv = array.get(ppVal,  ps)
+                int   st = array.get(ppTime, ps)
+                int   en = ps < nP - 1 ? array.get(ppTime, ps + 1) : svpSessT
+                if not na(pv) and not na(st)
+                    plPoc.push(line.new(st, pv, en, pv, xloc.bar_time, color=pPocC, width=2))
+                    plVah.push(line.new(st, hv, en, hv, xloc.bar_time, color=pVahC, width=1))
+                    plVal.push(line.new(st, lv, en, lv, xloc.bar_time, color=pValC, width=1))
+
+        if showPDH and not na(pDH) and not na(dSt)
+            lPDH := f_updateLine(lPDH, dSt, pDH, extT, pdHC, 2, 'Solid')
+            lPDL := f_updateLine(lPDL, dSt, pDL, extT, pdLC, 2, 'Solid')
+        if showPWH and not na(pWH) and not na(wSt)
+            lPWH := f_updateLine(lPWH, wSt, pWH, extT, pwHC, 2, 'Solid')
+            lPWL := f_updateLine(lPWL, wSt, pWL, extT, pwLC, 2, 'Solid')
+
+    // Confluence scoring
+    int dfpSc = dfpBias > 0 ? 2 : -2
+    int totSc = dfpSc + aoSc + cvdSc + oiSc + svpSc
+    int maxSc = 2 + (aoShow ? 1 : 0) + (cvdShow ? 2 : 0) + (svpShow ? 1 : 0)
+
+    int bullW = math.max(maxSc + totSc, 0)
+    int bearW = math.max(maxSc - totSc, 0)
+    int gcd_  = f_gcd(math.max(bullW, 1), math.max(bearW, 1))
+    int rBul  = bullW / math.max(gcd_, 1)
+    int rBea  = bearW / math.max(gcd_, 1)
+    string ratioStr = bullW == 0 ? 'Full Bear' : bearW == 0 ? 'Full Bull' :
+                      str.tostring(rBul) + ':' + str.tostring(rBea) +
+                      (bullW > bearW ? ' B↑' : bullW < bearW ? ' B↓' : ' Even')
+
+    float prob = maxSc != 0 ? math.max(0., math.min(100., float(totSc) / float(maxSc) * 50. + 50.)) : 50.
+
+    color probCol = prob >= cfThHigh * 100 ? color.new(color.lime, 10)   : prob <= cfThLow  * 100 ? color.new(color.red,  10)   :  color.new(color.orange, 10)
+    color probBg  = prob >= cfThHigh * 100 ? color.new(color.lime, 72)   : prob <= cfThLow  * 100 ? color.new(color.red,  72)   : color.new(color.orange, 72)
+    string biasLbl = prob >= cfThHigh * 100 ? 'HIGH PROB  BULL ▲' :
+                     prob <= cfThLow  * 100 ? 'HIGH PROB  BEAR ▼' : 'NEUTRAL / WAIT'
+
+    int macroDir = dfpBias > 0 ? 1 : -1
+    bool aoConf  = aoSc  == macroDir
+    bool cvdConf = cvdSc == macroDir
+    bool oiConf  = oiSc  == macroDir
+    bool svpConf = svpSc == macroDir
+    int  nConf   = (aoConf ? 1 : 0) + (cvdConf ? 1 : 0) + (oiConf ? 1 : 0) + (svpConf ? 1 : 0)
+    string th_bar = (prob >= 85. ? '█' : '░') + (prob >= 67. ? '█' : '░') + (prob >= 55. ? '█' : '░') +  '|' + (prob <= 45. ? '█' : '░') + (prob <= 33. ? '█' : '░') + (prob <= 15. ? '█' : '░')
+    color thC1 = prob >= 85. ? color.new(color.lime, 0) : color.new(color.gray, 60)
+    color thC6 = prob <= 15. ? color.new(color.red,  0) : color.new(color.gray, 60)
+
+    color  zoneCol = aboveVah ? color.new(color.lime, 20) : belowVal ? color.new(color.red, 20) : color.new(color.gray, 30)
+    string zoneStr = aboveVah ? 'ABOVE VAH ▲' : belowVal ? 'BELOW VAL ▼' : 'In Value Area'
+
+    if cfShow
+        color hBg = color.new(color.navy, 25)
+        color sBg = color.new(color.black, 55)
+
+        //=========================================================================
+        //INNER FUNCTION 2: moved to top of script ie Global  (called here as used)
+        //=========================================================================
+        table.cell(cfTbl, 1, 10, aoStr + f_conf(aoConf), text_color=f_sigC(aoSc, macroDir), text_size=size.tiny)
+        
+        table.cell(cfTbl, 0, 0,  'AOI CONFLUENCE',  bgcolor=hBg, text_color=color.white,  text_size=size.small,  text_halign=text.align_center)
+        table.cell(cfTbl, 1, 0,  'SESSION [PRO]',    bgcolor=hBg, text_color=color.white,  text_size=size.small,  text_halign=text.align_center)
+        table.cell(cfTbl, 0, 1,  'PROB',             bgcolor=probBg, text_color=color.gray, text_size=size.tiny)
+        table.cell(cfTbl, 1, 1,  str.tostring(math.round(prob)) + '%', bgcolor=probBg, text_color=probCol, text_size=size.normal)
+        table.cell(cfTbl, 0, 2,  'RATIO',            text_color=color.gray,  text_size=size.tiny)
+        table.cell(cfTbl, 1, 2,  ratioStr,            text_color=probCol,     text_size=size.small)
+        table.cell(cfTbl, 0, 3,  'BIAS',             text_color=color.gray,  text_size=size.tiny)
+        table.cell(cfTbl, 1, 3,  biasLbl,             text_color=probCol,     text_size=size.tiny)
+        table.cell(cfTbl, 0, 4,  'THRESHOLD',        bgcolor=sBg, text_color=color.gray,   text_size=size.tiny)
+        table.cell(cfTbl, 1, 4,  th_bar,              bgcolor=sBg, text_color=probCol,      text_size=size.small)
+        table.cell(cfTbl, 0, 5,  'SESSION ZONE',     text_color=color.gray,  text_size=size.tiny)
+        table.cell(cfTbl, 1, 5,  zoneStr,             text_color=zoneCol,     text_size=size.tiny)
+        string accSign = fpDeltaAcc > 0 ? '+' : ''
+        table.cell(cfTbl, 0, 6,  'ΣΔ ACCUM',         text_color=color.gray,  text_size=size.tiny)
+        table.cell(cfTbl, 1, 6,  accSign + f_fmtVol(fpDeltaAcc), text_color=fpDeltaAcc > 0 ? color.lime : color.red, text_size=size.tiny)
+        table.cell(cfTbl, 0, 7,  '── MACRO ──',      bgcolor=sBg, text_color=color.gray,   text_size=size.tiny)
+        table.cell(cfTbl, 1, 7,  str.tostring(nConf) + '/4 confirm', bgcolor=sBg, text_color=color.silver, text_size=size.tiny)
+        table.cell(cfTbl, 0, 8,  (dfpBias > 0 ? '+' : '-') + ' Δ Flow ×2', text_color=color.white, text_size=size.tiny)
+        table.cell(cfTbl, 1, 8,  dfpPhase,            text_color=dfpBias > 0 ? color.lime : color.red, text_size=size.tiny)
+        table.cell(cfTbl, 0, 9,  '── SIGNALS ──',    bgcolor=sBg, text_color=color.gray,   text_size=size.tiny)
+        table.cell(cfTbl, 1, 9,  'vs macro',          bgcolor=sBg, text_color=color.gray,   text_size=size.tiny)
+        table.cell(cfTbl, 0, 10, (aoSc > 0 ? '+' : aoSc < 0 ? '-' : 'o') + ' AO',    text_color=color.white, text_size=size.tiny)
+        table.cell(cfTbl, 1, 10, aoStr  + f_conf(aoConf),   text_color=f_sigC(aoSc,  macroDir), text_size=size.tiny)
+        table.cell(cfTbl, 0, 11, (cvdSc > 0 ? '+' : cvdSc < 0 ? '-' : 'o') + ' CVD', text_color=color.white, text_size=size.tiny)
+        table.cell(cfTbl, 1, 11, cvdStr + f_conf(cvdConf),  text_color=f_sigC(cvdSc, macroDir), text_size=size.tiny)
+        table.cell(cfTbl, 0, 12, (oiSc  > 0 ? '+' : oiSc  < 0 ? '-' : 'o') + ' OI',  text_color=color.white, text_size=size.tiny)
+        table.cell(cfTbl, 1, 12, oiStr  + f_conf(oiConf),   text_color=f_sigC(oiSc,  macroDir), text_size=size.tiny)
+        table.cell(cfTbl, 0, 13, (svpSc > 0 ? '+' : svpSc < 0 ? '-' : 'o') + ' Sess VP', text_color=color.white, text_size=size.tiny)
+        table.cell(cfTbl, 1, 13, svpStr + f_conf(svpConf),  text_color=f_sigC(svpSc, macroDir), text_size=size.tiny)
+        table.cell(cfTbl, 0, 14, '85% 67% 55%', bgcolor=color.new(color.lime, 70), text_color=thC1, text_size=size.tiny)
+        table.cell(cfTbl, 1, 14, '45% 33% 15%', bgcolor=color.new(color.red,  70), text_color=thC6, text_size=size.tiny)
+        table.cell(cfTbl, 0, 15, 'ALERT', bgcolor=color.new(probCol, 55),
+             text_color=nConf >= 3 ? color.white : color.gray, text_size=size.tiny)
+        table.cell(cfTbl, 1, 15, nConf >= 3 ? 'ACTIVE' : 'STANDBY', bgcolor=color.new(probCol, 55),
+             text_color=nConf >= 3 ? color.white : color.gray, text_size=size.tiny)
+
+//══════════════════════════════════════════════════════════════════════
+// ALERTS
+//══════════════════════════════════════════════════════════════════════
+alertcondition(bearImbal,                                                  'Bear Δ Imbalance',   'Buyers absorbed, price breaks below VAL')
+alertcondition(bullImbal,                                                  'Bull Δ Imbalance',   'Sellers absorbed, price breaks above VAH')
+alertcondition(dfpBias > 0 and aoSc == 1  and cvdSc == 1  and oiSc == 1,  'Full Bull Confluence','All signals confirm Bullish')
+alertcondition(dfpBias < 0 and aoSc == -1 and cvdSc == -1 and oiSc == -1, 'Full Bear Confluence','All signals confirm Bearish')
+alertcondition(aboveVah and dfpBias > 0,                                   'Bull Zone Breakout',  'Price above C-VAH + Bullish macro')
+alertcondition(belowVal and dfpBias < 0,                                   'Bear Zone Breakdown', 'Price below C-VAL + Bearish macro')
+alertcondition(aboveVah and dfpBias < 0,                                   'Bull Trap Warning',   'Price above VAH but Bearish macro')
+alertcondition(belowVal and dfpBias > 0,                                   'Bear Trap Warning',   'Price below VAL but Bullish macro')
