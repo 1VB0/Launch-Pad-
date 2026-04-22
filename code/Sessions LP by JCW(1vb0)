@@ -487,61 +487,7 @@ plotshape(show_state_dots and bear_state == 2,
      title = "Bear Retest Ready", style = shape.triangledown,
      location = location.abovebar, color = color.new(color.red, 20), size = size.tiny)
 
-// ═════════════════════════════════════════════════════════════════════════════
-// SL / ENTRY LINES + PRICE AXIS LABELS
-// ═════════════════════════════════════════════════════════════════════════════
-var line  sl_line      = na
-var line  entry_line   = na
-var label sl_axis_lbl  = na
-var label en_axis_lbl  = na
-var float active_sl    = na
-var float active_entry = na
-var string active_dir  = ""
 
-if long_signal
-    if not na(sl_line)
-        line.delete(sl_line)
-    if not na(entry_line)
-        line.delete(entry_line)
-    active_sl    := low
-    active_entry := close
-    active_dir   := "long"
-    if show_sl_line
-        sl_line    := line.new(bar_index, active_sl,    bar_index + 1, active_sl,
-             color = sl_col, width = 1, style = line.style_dashed, extend = extend.right)
-        entry_line := line.new(bar_index, active_entry, bar_index + 1, active_entry,
-             color = en_col, width = 1, style = line.style_dashed, extend = extend.right)
-
-if short_signal
-    if not na(sl_line)
-        line.delete(sl_line)
-    if not na(entry_line)
-        line.delete(entry_line)
-    active_sl    := high
-    active_entry := close
-    active_dir   := "short"
-    if show_sl_line
-        sl_line    := line.new(bar_index, active_sl,    bar_index + 1, active_sl,
-             color = sl_col, width = 1, style = line.style_dashed, extend = extend.right)
-        entry_line := line.new(bar_index, active_entry, bar_index + 1, active_entry,
-             color = en_col, width = 1, style = line.style_dashed, extend = extend.right)
-
-if barstate.islast and show_sl_label and not na(active_sl)
-    if not na(sl_axis_lbl)
-        label.delete(sl_axis_lbl)
-    if not na(en_axis_lbl)
-        label.delete(en_axis_lbl)
-    dir_icon = active_dir == "long" ? "▲" : "▼"
-    sl_axis_lbl := label.new(
-         x = bar_index + 3, y = active_sl,
-         text  = "◀ SL   " + str.tostring(active_sl,    format.mintick),
-         xloc  = xloc.bar_index, style = label.style_label_left,
-         color = sl_col, textcolor = color.white, size = size.small)
-    en_axis_lbl := label.new(
-         x = bar_index + 3, y = active_entry,
-         text  = "◀ ENTRY  " + dir_icon + "  " + str.tostring(active_entry, format.mintick),
-         xloc  = xloc.bar_index, style = label.style_label_left,
-         color = en_col, textcolor = color.black, size = size.small)
 
 // ═════════════════════════════════════════════════════════════════════════════
 // ALERTS
@@ -644,9 +590,3 @@ if barstate.islast
     table.cell(leg, 0, 13, "Bear",      text_color = color.silver, text_size = size.tiny, bgcolor = sbg)
     table.cell(leg, 1, 13, bear_st_txt, text_color = bear_st_col,  text_size = size.tiny, bgcolor = sbg)
     table.cell(leg, 2, 13, "",          bgcolor = bear_st_col,      text_size = size.tiny)
-
-    string sl_txt = not na(active_sl)    ? str.tostring(active_sl,    format.mintick) : "—"
-    string en_txt = not na(active_entry) ? str.tostring(active_entry, format.mintick) : "—"
-    table.cell(leg, 0, 14, "SL / Entry", text_color = color.silver, text_size = size.tiny, bgcolor = sbg)
-    table.cell(leg, 1, 14, sl_txt,       text_color = sl_col,        text_size = size.tiny, bgcolor = sbg)
-    table.cell(leg, 2, 14, en_txt,       text_color = en_col,        text_size = size.tiny, bgcolor = sbg)
