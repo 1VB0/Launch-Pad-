@@ -3,9 +3,6 @@
 //   Delta Flow Profile © LuxAlgo (CC BY-NC-SA 4.0)
 // Merged, extended and converted to Pine Script v6 by 1vb0
 // https://creativecommons.org/licenses/by-nc-sa/4.0/
-// This work is an opensource use and subject to the fair use clauses 
-// but altered into an entirely other version of the products original use
-// mainly for UI accessibility..
  
 //@version=6
 indicator("Volume Profile + Delta Flow [Merged]",
@@ -863,7 +860,7 @@ if barstate.islast and key_show
                               text_color=vahDelta >= 0 ? color.lime : color.red, text_size=size.tiny, bgcolor=sbg)
     table.cell(keyTbl, 4, r, vahDelta >= 0 ? "▲" : "▼",
                               text_color=vahDelta >= 0 ? color.lime : color.red, text_size=size.tiny, bgcolor=sbg)
-    r += 1
+    r += 1 
 
     // ── VAL ──────────────────────────────────────────────────────────
     float valVolPct = not na(valP) and vda.totalVolume.sum() > 0 ?
@@ -946,11 +943,13 @@ if barstate.islast and key_show
 
     // ── LVN ROWS ─────────────────────────────────────────────────────
     if topLVN > 0
-        for n = 0 to topLVN - 1
-            float lp  = lvnPrice.get(n)
-            float lv  = lvnVolPct.get(n)
-            float ld  = lvnDeltaPct.get(n)
-            bool  lb  = lvnBullBias.get(n)
+        // Guard: clamp topLVN to actual array size
+        int safeLVN = math.min(topLVN, lvnPrice.size())
+        for n = 0 to safeLVN - 1
+            float lp = lvnPrice.get(n)
+            float lv = lvnVolPct.get(n)
+            float ld = lvnDeltaPct.get(n)
+            bool  lb = lvnBullBias.get(n)
             table.cell(keyTbl, 0, r, "LVN " + str.tostring(n + 1),
                  text_color=color.new(vn_troughColor, 0), text_size=size.tiny, bgcolor=sbg)
             table.cell(keyTbl, 1, r, str.tostring(lp, format.mintick),
@@ -978,4 +977,5 @@ if barstate.islast and key_show
                               text_color=biasCol, text_size=size.tiny, bgcolor=sec_bg)
     table.cell(keyTbl, 4, r, bullBias ? "▲ BULL" : "▼ BEAR",
                               text_color=biasCol, text_size=size.small, bgcolor=color.new(biasCol, 70))
+
 
