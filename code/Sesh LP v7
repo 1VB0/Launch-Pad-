@@ -1,0 +1,582 @@
+// ─────────────────────────────────────────────────────────────────────────────
+// Sessions LP  ·  v7  ·  by 1vbo (JasonCWilliams)
+// All 3 sessions auto-detected — NY + London + Asian run simultaneously
+// Each session has its own independent 5-min range, mean, median & signals
+// ─────────────────────────────────────────────────────────────────────────────
+//@version=6
+indicator("Sessions LP v7 — Auto 3-Session by 1vbo",
+     shorttitle       = "Sesh LP v7",
+     overlay          = true,
+     max_lines_count  = 500,
+     max_labels_count = 500,
+     max_boxes_count  = 500)
+
+// ═════════════════════════════════════════════════════════════════════════════
+// INPUTS
+// ═════════════════════════════════════════════════════════════════════════════
+grp_sig = "── Signals ──────────────────────────────────"
+rsi_length      = input.int   (14,   "RSI Length",                 minval = 2,  group = grp_sig)
+rsi_src         = input.source(close,"RSI Source",                              group = grp_sig)
+div_lookback    = input.int   (5,    "Divergence Lookback (bars)", minval = 2, maxval = 20, group = grp_sig)
+require_div     = input.bool  (true, "Require RSI Divergence",                  group = grp_sig)
+div_memory      = input.int   (20,   "Divergence Memory (bars)",  minval = 1, maxval = 50, group = grp_sig)
+retest_tol      = input.float (1.0,  "Retest Tolerance (ticks)",  minval = 0., maxval = 10., step = 0.5, group = grp_sig)
+show_labels     = input.bool  (true, "Show Long/Short Labels",                  group = grp_sig)
+show_ranges     = input.bool  (true, "Show Range Lines",                        group = grp_sig)
+show_state_dots = input.bool  (false,"Show State Indicator Dots",               group = grp_sig)
+
+grp_mean = "── 5m Range Mean & Median ──────────────────"
+show_mean     = input.bool  (true,  "Show Mean Line",              group = grp_mean)
+show_median   = input.bool  (true,  "Show Median Line",            group = grp_mean)
+show_mean_rej = input.bool  (true,  "Show Mean Rejection Signal",  group = grp_mean)
+mean_rej_tol  = input.float (2.0,   "Rejection Tolerance (ticks)", group = grp_mean, minval = 0.5, maxval = 20., step = 0.5)
+mean_rej_bars = input.int   (3,     "Rejection Confirm Bars",      group = grp_mean, minval = 1, maxval = 10)
+
+grp_sess = "── Session Colours ──────────────────────────"
+col_ny     = input.color(color.new(#00BFFF, 0),  "NY Colour",     group = grp_sess)
+col_ld     = input.color(color.new(#FFD700, 0),  "London Colour", group = grp_sess)
+col_as     = input.color(color.new(#FF69B4, 0),  "Asian Colour",  group = grp_sess)
+
+grp_zone = "── 5m Zone Highlight ───────────────────────"
+show_5m_zone = input.bool (true,  "Show 5m Zone Highlight",                   group = grp_zone)
+col_5m_bull  = input.color(color.new(color.green, 75), "Bull (above hi_5m)", group = grp_zone)
+col_5m_bear  = input.color(color.new(color.red,   75), "Bear (below lo_5m)", group = grp_zone)
+col_5m_neut  = input.color(color.new(color.gray,  88), "Neutral (inside)",   group = grp_zone)
+
+// ═════════════════════════════════════════════════════════════════════════════
+// SESSION SNAP HELPERS
+// ═════════════════════════════════════════════════════════════════════════════
+f_snap(string sess) =>
+    not na(time("1", sess)) and na(time("1", sess)[1])
+
+// ── NY snaps (9:00 AM EST, weekdays) ─────────────────────────────────────────
+bool ny_snap_open = f_snap("0900-0901:23456")
+bool ny_snap_5m   = f_snap("0905-0906:23456")
+bool ny_snap_10m  = f_snap("0910-0911:23456")
+bool ny_snap_15m  = f_snap("0915-0916:23456")
+bool ny_snap_30m  = f_snap("0930-0931:23456")
+bool ny_snap_60m  = f_snap("1000-1001:23456")
+bool ny_snap_4h   = f_snap("1300-1301:23456")
+bool ny_snap_8h   = f_snap("1700-1701:23456")
+bool ny_in        = not na(time("1", "0900-1900:23456"))
+bool ny_med_win   = not na(time("1", "0900-0905:23456"))
+
+// ── London snaps (3:00 AM EST, weekdays) ─────────────────────────────────────
+bool ld_snap_open = f_snap("0300-0301:23456")
+bool ld_snap_5m   = f_snap("0305-0306:23456")
+bool ld_snap_10m  = f_snap("0310-0311:23456")
+bool ld_snap_15m  = f_snap("0315-0316:23456")
+bool ld_snap_30m  = f_snap("0330-0331:23456")
+bool ld_snap_60m  = f_snap("0400-0401:23456")
+bool ld_snap_4h   = f_snap("0700-0701:23456")
+bool ld_snap_8h   = f_snap("1100-1101:23456")
+bool ld_in        = not na(time("1", "0300-0900:23456"))
+bool ld_med_win   = not na(time("1", "0300-0305:23456"))
+
+// ── Asian snaps (7:00 PM EST, all days) ──────────────────────────────────────
+bool as_snap_open = f_snap("1900-1901:1234567")
+bool as_snap_5m   = f_snap("1905-1906:1234567")
+bool as_snap_10m  = f_snap("1910-1911:1234567")
+bool as_snap_15m  = f_snap("1915-1916:1234567")
+bool as_snap_30m  = f_snap("1930-1931:1234567")
+bool as_snap_60m  = f_snap("2000-2001:1234567")
+bool as_snap_4h   = f_snap("2300-2301:1234567")
+bool as_snap_8h   = f_snap("0300-0301:1234567")
+bool as_in        = not na(time("1", "1900-0300:1234567"))
+bool as_med_win   = not na(time("1", "1900-1905:1234567"))
+
+// ═════════════════════════════════════════════════════════════════════════════
+// ROLLING HIGH / LOW  — one per session
+// ═════════════════════════════════════════════════════════════════════════════
+var float ny_roll_hi = na,  var float ny_roll_lo = na
+var float ld_roll_hi = na,  var float ld_roll_lo = na
+var float as_roll_hi = na,  var float as_roll_lo = na
+
+// NY
+if ny_snap_open
+    ny_roll_hi := high
+    ny_roll_lo := low
+else if ny_in
+    ny_roll_hi := math.max(ny_roll_hi, high)
+    ny_roll_lo := math.min(ny_roll_lo, low)
+
+// London
+if ld_snap_open
+    ld_roll_hi := high
+    ld_roll_lo := low
+else if ld_in
+    ld_roll_hi := math.max(ld_roll_hi, high)
+    ld_roll_lo := math.min(ld_roll_lo, low)
+
+// Asian
+if as_snap_open
+    as_roll_hi := high
+    as_roll_lo := low
+else if as_in
+    as_roll_hi := math.max(as_roll_hi, high)
+    as_roll_lo := math.min(as_roll_lo, low)
+
+// ═════════════════════════════════════════════════════════════════════════════
+// RANGE LOCKS — each session locks independently
+// ═════════════════════════════════════════════════════════════════════════════
+
+// ── NY ───────────────────────────────────────────────────────────────────────
+var float ny_hi_5m  = na, var float ny_lo_5m  = na
+var float ny_hi_10m = na, var float ny_lo_10m = na
+var float ny_hi_15m = na, var float ny_lo_15m = na
+var float ny_hi_30m = na, var float ny_lo_30m = na
+var float ny_hi_60m = na, var float ny_lo_60m = na
+var float ny_hi_4h  = na, var float ny_lo_4h  = na
+var float ny_hi_8h  = na, var float ny_lo_8h  = na
+var float ny_mean   = na, var float ny_median = na
+var array<float> ny_med_buf = array.new_float()
+
+if ny_snap_open
+    ny_hi_5m := na, ny_lo_5m := na, ny_mean := na, ny_median := na
+    array.clear(ny_med_buf)
+if ny_in and ny_med_win
+    array.push(ny_med_buf, hlc3)
+if ny_snap_5m
+    ny_hi_5m := ny_roll_hi
+    ny_lo_5m := ny_roll_lo
+    ny_mean  := (ny_hi_5m + ny_lo_5m) / 2.0
+    if array.size(ny_med_buf) > 0
+        array.sort(ny_med_buf, order.ascending)
+        int sz = array.size(ny_med_buf), int mid = int(sz / 2)
+        ny_median := sz % 2 == 0 and sz >= 2 ? (array.get(ny_med_buf, mid-1) + array.get(ny_med_buf, mid)) / 2.0 : array.get(ny_med_buf, mid)
+if ny_snap_10m
+    ny_hi_10m := ny_roll_hi, ny_lo_10m := ny_roll_lo
+if ny_snap_15m
+    ny_hi_15m := ny_roll_hi, ny_lo_15m := ny_roll_lo
+if ny_snap_30m
+    ny_hi_30m := ny_roll_hi, ny_lo_30m := ny_roll_lo
+if ny_snap_60m
+    ny_hi_60m := ny_roll_hi, ny_lo_60m := ny_roll_lo
+if ny_snap_4h
+    ny_hi_4h  := ny_roll_hi, ny_lo_4h  := ny_roll_lo
+if ny_snap_8h
+    ny_hi_8h  := ny_roll_hi, ny_lo_8h  := ny_roll_lo
+
+// ── London ───────────────────────────────────────────────────────────────────
+var float ld_hi_5m  = na, var float ld_lo_5m  = na
+var float ld_hi_10m = na, var float ld_lo_10m = na
+var float ld_hi_15m = na, var float ld_lo_15m = na
+var float ld_hi_30m = na, var float ld_lo_30m = na
+var float ld_hi_60m = na, var float ld_lo_60m = na
+var float ld_hi_4h  = na, var float ld_lo_4h  = na
+var float ld_hi_8h  = na, var float ld_lo_8h  = na
+var float ld_mean   = na, var float ld_median = na
+var array<float> ld_med_buf = array.new_float()
+
+if ld_snap_open
+    ld_hi_5m := na, ld_lo_5m := na, ld_mean := na, ld_median := na
+    array.clear(ld_med_buf)
+if ld_in and ld_med_win
+    array.push(ld_med_buf, hlc3)
+if ld_snap_5m
+    ld_hi_5m := ld_roll_hi
+    ld_lo_5m := ld_roll_lo
+    ld_mean  := (ld_hi_5m + ld_lo_5m) / 2.0
+    if array.size(ld_med_buf) > 0
+        array.sort(ld_med_buf, order.ascending)
+        int sz = array.size(ld_med_buf), int mid = int(sz / 2)
+        ld_median := sz % 2 == 0 and sz >= 2 ? (array.get(ld_med_buf, mid-1) + array.get(ld_med_buf, mid)) / 2.0 : array.get(ld_med_buf, mid)
+if ld_snap_10m
+    ld_hi_10m := ld_roll_hi, ld_lo_10m := ld_roll_lo
+if ld_snap_15m
+    ld_hi_15m := ld_roll_hi, ld_lo_15m := ld_roll_lo
+if ld_snap_30m
+    ld_hi_30m := ld_roll_hi, ld_lo_30m := ld_roll_lo
+if ld_snap_60m
+    ld_hi_60m := ld_roll_hi, ld_lo_60m := ld_roll_lo
+if ld_snap_4h
+    ld_hi_4h  := ld_roll_hi, ld_lo_4h  := ld_roll_lo
+if ld_snap_8h
+    ld_hi_8h  := ld_roll_hi, ld_lo_8h  := ld_roll_lo
+
+// ── Asian ────────────────────────────────────────────────────────────────────
+var float as_hi_5m  = na, var float as_lo_5m  = na
+var float as_hi_10m = na, var float as_lo_10m = na
+var float as_hi_15m = na, var float as_lo_15m = na
+var float as_hi_30m = na, var float as_lo_30m = na
+var float as_hi_60m = na, var float as_lo_60m = na
+var float as_hi_4h  = na, var float as_lo_4h  = na
+var float as_hi_8h  = na, var float as_lo_8h  = na
+var float as_mean   = na, var float as_median = na
+var array<float> as_med_buf = array.new_float()
+
+if as_snap_open
+    as_hi_5m := na, as_lo_5m := na, as_mean := na, as_median := na
+    array.clear(as_med_buf)
+if as_in and as_med_win
+    array.push(as_med_buf, hlc3)
+if as_snap_5m
+    as_hi_5m := as_roll_hi
+    as_lo_5m := as_roll_lo
+    as_mean  := (as_hi_5m + as_lo_5m) / 2.0
+    if array.size(as_med_buf) > 0
+        array.sort(as_med_buf, order.ascending)
+        int sz = array.size(as_med_buf), int mid = int(sz / 2)
+        as_median := sz % 2 == 0 and sz >= 2 ? (array.get(as_med_buf, mid-1) + array.get(as_med_buf, mid)) / 2.0 : array.get(as_med_buf, mid)
+if as_snap_10m
+    as_hi_10m := as_roll_hi, as_lo_10m := as_roll_lo
+if as_snap_15m
+    as_hi_15m := as_roll_hi, as_lo_15m := as_roll_lo
+if as_snap_30m
+    as_hi_30m := as_roll_hi, as_lo_30m := as_roll_lo
+if as_snap_60m
+    as_hi_60m := as_roll_hi, as_lo_60m := as_roll_lo
+if as_snap_4h
+    as_hi_4h  := as_roll_hi, as_lo_4h  := as_roll_lo
+if as_snap_8h
+    as_hi_8h  := as_roll_hi, as_lo_8h  := as_roll_lo
+
+// ═════════════════════════════════════════════════════════════════════════════
+// ACTIVE SESSION DETECTION
+// Which session range drives signals on the current bar
+// London : 3:00 AM – 9:00 AM
+// NY     : 9:00 AM – 7:00 PM
+// Asian  : 7:00 PM – 3:00 AM
+// ═════════════════════════════════════════════════════════════════════════════
+bool active_ny  = ny_in
+bool active_ld  = ld_in
+bool active_as  = as_in
+
+// Pull the active session's levels into generic aliases for signal logic
+float act_hi_5m  = active_ny ? ny_hi_5m  : active_ld ? ld_hi_5m  : active_as ? as_hi_5m  : na
+float act_lo_5m  = active_ny ? ny_lo_5m  : active_ld ? ld_lo_5m  : active_as ? as_lo_5m  : na
+float act_mean   = active_ny ? ny_mean   : active_ld ? ld_mean   : active_as ? as_mean   : na
+float act_median = active_ny ? ny_median : active_ld ? ld_median : active_as ? as_median : na
+bool  act_in     = active_ny or active_ld or active_as
+
+string act_name  = active_ny ? "NY" : active_ld ? "London" : active_as ? "Asian" : "—"
+color  act_col   = active_ny ? col_ny : active_ld ? col_ld : active_as ? col_as : color.gray
+
+// ═════════════════════════════════════════════════════════════════════════════
+// PLOT RANGE LINES
+// 5m H/L + Mean + Median only = 12 plots total (well under the 64 limit)
+// Extended snap levels (10m/15m/30m/60m) are tracked but shown via labels only
+// ═════════════════════════════════════════════════════════════════════════════
+
+// NY — 4 plots
+plot(show_ranges ? ny_hi_5m  : na, "NY 5m H",   color = col_ny,                linewidth = 2, style = plot.style_stepline)
+plot(show_ranges ? ny_lo_5m  : na, "NY 5m L",   color = col_ny,                linewidth = 2, style = plot.style_stepline)
+plot(show_mean   ? ny_mean   : na, "NY Mean",   color = color.new(col_ny, 30), linewidth = 1, style = plot.style_stepline)
+plot(show_median ? ny_median : na, "NY Median", color = color.new(col_ny, 55), linewidth = 1, style = plot.style_stepline)
+
+// London — 4 plots
+plot(show_ranges ? ld_hi_5m  : na, "LD 5m H",   color = col_ld,                linewidth = 2, style = plot.style_stepline)
+plot(show_ranges ? ld_lo_5m  : na, "LD 5m L",   color = col_ld,                linewidth = 2, style = plot.style_stepline)
+plot(show_mean   ? ld_mean   : na, "LD Mean",   color = color.new(col_ld, 30), linewidth = 1, style = plot.style_stepline)
+plot(show_median ? ld_median : na, "LD Median", color = color.new(col_ld, 55), linewidth = 1, style = plot.style_stepline)
+
+// Asian — 4 plots
+plot(show_ranges ? as_hi_5m  : na, "AS 5m H",   color = col_as,                linewidth = 2, style = plot.style_stepline)
+plot(show_ranges ? as_lo_5m  : na, "AS 5m L",   color = col_as,                linewidth = 2, style = plot.style_stepline)
+plot(show_mean   ? as_mean   : na, "AS Mean",   color = color.new(col_as, 30), linewidth = 1, style = plot.style_stepline)
+plot(show_median ? as_median : na, "AS Median", color = color.new(col_as, 55), linewidth = 1, style = plot.style_stepline)
+
+
+bgcolor(ny_snap_open or ld_snap_open or as_snap_open ? color.new(color.white, 80) : na, title = "Session Open Flash")
+
+// ═════════════════════════════════════════════════════════════════════════════
+// RANGE LABELS  (only on snap bars, active session only)
+// ═════════════════════════════════════════════════════════════════════════════
+if show_ranges and active_ny and ny_snap_5m and not na(ny_hi_5m)
+    label.new(bar_index, ny_hi_5m, "NY 5m H", style = label.style_label_left, color = col_ny, textcolor = color.black, size = size.tiny)
+    label.new(bar_index, ny_lo_5m, "NY 5m L", style = label.style_label_left, color = col_ny, textcolor = color.black, size = size.tiny)
+
+if show_ranges and active_ld and ld_snap_5m and not na(ld_hi_5m)
+    label.new(bar_index, ld_hi_5m, "LD 5m H", style = label.style_label_left, color = col_ld, textcolor = color.black, size = size.tiny)
+    label.new(bar_index, ld_lo_5m, "LD 5m L", style = label.style_label_left, color = col_ld, textcolor = color.black, size = size.tiny)
+
+if show_ranges and active_as and as_snap_5m and not na(as_hi_5m)
+    label.new(bar_index, as_hi_5m, "AS 5m H", style = label.style_label_left, color = col_as, textcolor = color.black, size = size.tiny)
+    label.new(bar_index, as_lo_5m, "AS 5m L", style = label.style_label_left, color = col_as, textcolor = color.black, size = size.tiny)
+
+// ═════════════════════════════════════════════════════════════════════════════
+// 5m ZONE BOX  (active session only)
+// ═════════════════════════════════════════════════════════════════════════════
+var box zone_box = na
+
+if ny_snap_open or ld_snap_open or as_snap_open
+    if not na(zone_box)
+        box.delete(zone_box)
+        zone_box := na
+
+bool snap_5m_any = (active_ny and ny_snap_5m) or (active_ld and ld_snap_5m) or (active_as and as_snap_5m)
+
+if show_5m_zone and snap_5m_any and not na(act_hi_5m)
+    zone_box := box.new(
+         left         = bar_index,
+         top          = act_hi_5m,
+         right        = bar_index + 1,
+         bottom       = act_lo_5m,
+         border_color = color.new(act_col, 60),
+         bgcolor      = col_5m_neut,
+         border_width = 1,
+         xloc         = xloc.bar_index)
+
+if show_5m_zone and not na(zone_box) and act_in and not na(act_hi_5m)
+    box.set_right(zone_box, bar_index + 1)
+    box.set_border_color(zone_box, color.new(act_col, 60))
+    if close > act_hi_5m
+        box.set_bgcolor(zone_box, col_5m_bull)
+    else if close < act_lo_5m
+        box.set_bgcolor(zone_box, col_5m_bear)
+    else
+        box.set_bgcolor(zone_box, col_5m_neut)
+
+// ═════════════════════════════════════════════════════════════════════════════
+// RSI DIVERGENCE ENGINE  (shared — one divergence engine across all sessions)
+// ═════════════════════════════════════════════════════════════════════════════
+rsi_val = ta.rsi(rsi_src, rsi_length)
+
+pivot_lo_price = ta.pivotlow (low,     div_lookback, div_lookback)
+pivot_hi_price = ta.pivothigh(high,    div_lookback, div_lookback)
+pivot_lo_rsi   = ta.pivotlow (rsi_val, div_lookback, div_lookback)
+pivot_hi_rsi   = ta.pivothigh(rsi_val, div_lookback, div_lookback)
+
+var float prev_lo_price = na, var float prev_lo_rsi = na
+var float last_lo_price = na, var float last_lo_rsi = na
+var float prev_hi_price = na, var float prev_hi_rsi = na
+var float last_hi_price = na, var float last_hi_rsi = na
+
+if not na(pivot_lo_price)
+    prev_lo_price := last_lo_price
+    prev_lo_rsi   := last_lo_rsi
+    last_lo_price := pivot_lo_price
+    last_lo_rsi   := pivot_lo_rsi
+
+if not na(pivot_hi_price)
+    prev_hi_price := last_hi_price
+    prev_hi_rsi   := last_hi_rsi
+    last_hi_price := pivot_hi_price
+    last_hi_rsi   := pivot_hi_rsi
+
+bull_div_now = not na(prev_lo_price) and not na(last_lo_price) and
+               last_lo_price < prev_lo_price and last_lo_rsi > prev_lo_rsi
+
+bear_div_now = not na(prev_hi_price) and not na(last_hi_price) and
+               last_hi_price > prev_hi_price and last_hi_rsi < prev_hi_rsi
+
+var int bull_div_age = 999
+var int bear_div_age = 999
+
+bull_div_age := bull_div_now ? 0 : bull_div_age + 1
+bear_div_age := bear_div_now ? 0 : bear_div_age + 1
+
+recent_bull_div = bull_div_age <= div_memory
+recent_bear_div = bear_div_age <= div_memory
+
+// ═════════════════════════════════════════════════════════════════════════════
+// RETEST STATE MACHINE  (runs on active session's 5m range)
+// ═════════════════════════════════════════════════════════════════════════════
+var int bull_state = 0
+var int bear_state = 0
+
+if ny_snap_open or ld_snap_open or as_snap_open
+    bull_state := 0
+    bear_state := 0
+
+tol_v = retest_tol * syminfo.mintick
+
+if not na(act_hi_5m) and not na(act_lo_5m) and act_in
+    if bull_state == 0
+        if close > act_hi_5m
+            bull_state := 1
+    else if bull_state == 1
+        if close < act_lo_5m
+            bull_state := 0
+        else if low <= act_hi_5m + tol_v
+            bull_state := 2
+    else if bull_state == 2
+        if close > act_hi_5m
+            bull_state := 1
+        else if close < act_lo_5m
+            bull_state := 0
+
+    if bear_state == 0
+        if close < act_lo_5m
+            bear_state := 1
+    else if bear_state == 1
+        if close > act_hi_5m
+            bear_state := 0
+        else if high >= act_lo_5m - tol_v
+            bear_state := 2
+    else if bear_state == 2
+        if close < act_lo_5m
+            bear_state := 1
+        else if close > act_hi_5m
+            bear_state := 0
+
+retest_long_raw  = bull_state == 2 and not na(act_hi_5m) and close > act_hi_5m and act_in
+retest_short_raw = bear_state == 2 and not na(act_lo_5m) and close < act_lo_5m and act_in
+
+long_signal  = retest_long_raw  and (not require_div or recent_bull_div)
+short_signal = retest_short_raw and (not require_div or recent_bear_div)
+
+// ═════════════════════════════════════════════════════════════════════════════
+// MEAN REJECTION ENGINE  (active session's mean)
+// ═════════════════════════════════════════════════════════════════════════════
+mean_tol_v = mean_rej_tol * syminfo.mintick
+
+inside_range = not na(act_mean) and not na(act_hi_5m) and not na(act_lo_5m) and
+               close <= act_hi_5m and close >= act_lo_5m and act_in
+
+mean_touched_low  = false
+mean_touched_high = false
+
+if not na(act_mean)
+    for i = 1 to mean_rej_bars
+        if low[i]  <= act_mean + mean_tol_v and low[i]  >= act_mean - mean_tol_v
+            mean_touched_low  := true
+        if high[i] >= act_mean - mean_tol_v and high[i] <= act_mean + mean_tol_v
+            mean_touched_high := true
+
+mean_bull_rej_raw = inside_range and mean_touched_low  and close > act_mean and close > open
+mean_bear_rej_raw = inside_range and mean_touched_high and close < act_mean and close < open
+
+var int mean_rej_cooldown = 0
+mean_rej_cooldown := mean_rej_cooldown > 0 ? mean_rej_cooldown - 1 : 0
+
+mean_bull_rej = show_mean_rej and mean_bull_rej_raw and mean_rej_cooldown == 0
+mean_bear_rej = show_mean_rej and mean_bear_rej_raw and mean_rej_cooldown == 0
+
+if mean_bull_rej or mean_bear_rej
+    mean_rej_cooldown := 5
+
+// ═════════════════════════════════════════════════════════════════════════════
+// SIGNAL SHAPES  (coloured by active session)
+// ═════════════════════════════════════════════════════════════════════════════
+plotshape(show_labels and long_signal,
+     title = "LONG", style = shape.labelup, location = location.belowbar,
+     color = act_col, textcolor = color.black, text = "▲", size = size.normal)
+
+plotshape(show_labels and short_signal,
+     title = "SHORT", style = shape.labeldown, location = location.abovebar,
+     color = act_col, textcolor = color.white, text = "▼", size = size.normal)
+
+plotshape(mean_bull_rej,
+     title = "Mean Bounce ▲", style = shape.labelup, location = location.belowbar,
+     color = color.new(act_col, 20), textcolor = color.black, text = "M↑", size = size.small)
+
+plotshape(mean_bear_rej,
+     title = "Mean Rejection ▼", style = shape.labeldown, location = location.abovebar,
+     color = color.new(act_col, 20), textcolor = color.white, text = "M↓", size = size.small)
+
+// ═════════════════════════════════════════════════════════════════════════════
+// STATE DOTS
+// ═════════════════════════════════════════════════════════════════════════════
+plotshape(show_state_dots and bull_state == 1 and not long_signal,
+     title = "Bull Setup", style = shape.circle,
+     location = location.belowbar, color = color.new(color.lime, 50), size = size.tiny)
+plotshape(show_state_dots and bull_state == 2,
+     title = "Bull Retest", style = shape.triangleup,
+     location = location.belowbar, color = color.new(color.lime, 20), size = size.tiny)
+plotshape(show_state_dots and bear_state == 1 and not short_signal,
+     title = "Bear Setup", style = shape.circle,
+     location = location.abovebar, color = color.new(color.red, 50), size = size.tiny)
+plotshape(show_state_dots and bear_state == 2,
+     title = "Bear Retest", style = shape.triangledown,
+     location = location.abovebar, color = color.new(color.red, 20), size = size.tiny)
+
+// ═════════════════════════════════════════════════════════════════════════════
+// ALERTS
+// ═════════════════════════════════════════════════════════════════════════════
+// ── NY Alerts ─────────────────────────────────────────────────────────────────
+alertcondition(long_signal  and active_ny, "NY — LONG Signal",       "Sessions LP — LONG  | Session: NY | Entry: close | SL: candle low")
+alertcondition(short_signal and active_ny, "NY — SHORT Signal",      "Sessions LP — SHORT | Session: NY | Entry: close | SL: candle high")
+alertcondition(bull_state == 2 and active_ny, "NY — Bull Retest Zone", "NY hi_5m retested — watching for long re-break")
+alertcondition(bear_state == 2 and active_ny, "NY — Bear Retest Zone", "NY lo_5m retested — watching for short re-break")
+alertcondition(mean_bull_rej and active_ny,   "NY — Mean Bounce ▲",    "NY: Price bounced UP off 5m mean")
+alertcondition(mean_bear_rej and active_ny,   "NY — Mean Reject ▼",    "NY: Price rejected DOWN off 5m mean")
+
+// ── London Alerts ─────────────────────────────────────────────────────────────
+alertcondition(long_signal  and active_ld, "London — LONG Signal",       "Sessions LP — LONG  | Session: London | Entry: close | SL: candle low")
+alertcondition(short_signal and active_ld, "London — SHORT Signal",      "Sessions LP — SHORT | Session: London | Entry: close | SL: candle high")
+alertcondition(bull_state == 2 and active_ld, "London — Bull Retest Zone", "London hi_5m retested — watching for long re-break")
+alertcondition(bear_state == 2 and active_ld, "London — Bear Retest Zone", "London lo_5m retested — watching for short re-break")
+alertcondition(mean_bull_rej and active_ld,   "London — Mean Bounce ▲",    "London: Price bounced UP off 5m mean")
+alertcondition(mean_bear_rej and active_ld,   "London — Mean Reject ▼",    "London: Price rejected DOWN off 5m mean")
+
+// ── Asian Alerts ──────────────────────────────────────────────────────────────
+alertcondition(long_signal  and active_as, "Asian — LONG Signal",       "Sessions LP — LONG  | Session: Asian | Entry: close | SL: candle low")
+alertcondition(short_signal and active_as, "Asian — SHORT Signal",      "Sessions LP — SHORT | Session: Asian | Entry: close | SL: candle high")
+alertcondition(bull_state == 2 and active_as, "Asian — Bull Retest Zone", "Asian hi_5m retested — watching for long re-break")
+alertcondition(bear_state == 2 and active_as, "Asian — Bear Retest Zone", "Asian lo_5m retested — watching for short re-break")
+alertcondition(mean_bull_rej and active_as,   "Asian — Mean Bounce ▲",    "Asian: Price bounced UP off 5m mean")
+alertcondition(mean_bear_rej and active_as,   "Asian — Mean Reject ▼",    "Asian: Price rejected DOWN off 5m mean")
+
+// ═════════════════════════════════════════════════════════════════════════════
+// LEGEND TABLE
+// ═════════════════════════════════════════════════════════════════════════════
+var table leg = table.new(
+     position.top_right, 3, 12,
+     bgcolor      = color.new(color.black, 70),
+     border_color = color.new(color.white, 55),
+     border_width = 1,
+     frame_color  = color.new(color.white, 35),
+     frame_width  = 1)
+
+if barstate.islast
+    color hb  = color.new(color.gray, 45)
+    color sbg = color.new(color.black, 55)
+
+    table.cell(leg, 0, 0, "Active Session", text_color = color.white,  text_size = size.small, bgcolor = hb)
+    table.cell(leg, 1, 0, act_name,         text_color = act_col,      text_size = size.small, bgcolor = hb)
+    table.cell(leg, 2, 0, "",               bgcolor = act_col,          text_size = size.small)
+
+    table.cell(leg, 0, 1, "NY 5m H/L",  text_color = col_ny, text_size = size.tiny, bgcolor = sbg)
+    string ny_hl = not na(ny_hi_5m) ? str.tostring(ny_hi_5m, format.mintick) + " / " + str.tostring(ny_lo_5m, format.mintick) : "—"
+    table.cell(leg, 1, 1, ny_hl, text_color = col_ny, text_size = size.tiny, bgcolor = sbg)
+    table.cell(leg, 2, 1, "", bgcolor = color.new(col_ny, 50), text_size = size.tiny)
+ 
+    table.cell(leg, 0, 2, "NY Mean",  text_color = col_ny, text_size = size.tiny, bgcolor = sbg)
+    table.cell(leg, 1, 2, not na(ny_mean) ? str.tostring(ny_mean, format.mintick) : "—", text_color = col_ny, text_size = size.tiny, bgcolor = sbg)
+    table.cell(leg, 2, 2, "", bgcolor = color.new(col_ny, 60), text_size = size.tiny)
+
+    table.cell(leg, 0, 3, "LD 5m H/L",  text_color = col_ld, text_size = size.tiny, bgcolor = sbg)
+    string ld_hl = not na(ld_hi_5m) ? str.tostring(ld_hi_5m, format.mintick) + " / " + str.tostring(ld_lo_5m, format.mintick) : "—"
+    table.cell(leg, 1, 3, ld_hl, text_color = col_ld, text_size = size.tiny, bgcolor = sbg)
+    table.cell(leg, 2, 3, "", bgcolor = color.new(col_ld, 50), text_size = size.tiny)
+
+    table.cell(leg, 0, 4, "LD Mean",  text_color = col_ld, text_size = size.tiny, bgcolor = sbg)
+    table.cell(leg, 1, 4, not na(ld_mean) ? str.tostring(ld_mean, format.mintick) : "—", text_color = col_ld, text_size = size.tiny, bgcolor = sbg)
+    table.cell(leg, 2, 4, "", bgcolor = color.new(col_ld, 60), text_size = size.tiny)
+
+    table.cell(leg, 0, 5, "AS 5m H/L",  text_color = col_as, text_size = size.tiny, bgcolor = sbg)
+    string as_hl = not na(as_hi_5m) ? str.tostring(as_hi_5m, format.mintick) + " / " + str.tostring(as_lo_5m, format.mintick) : "—"
+    table.cell(leg, 1, 5, as_hl, text_color = col_as, text_size = size.tiny, bgcolor = sbg)
+    table.cell(leg, 2, 5, "", bgcolor = color.new(col_as, 50), text_size = size.tiny)
+
+    table.cell(leg, 0, 6, "AS Mean",  text_color = col_as, text_size = size.tiny, bgcolor = sbg)
+    table.cell(leg, 1, 6, not na(as_mean) ? str.tostring(as_mean, format.mintick) : "—", text_color = col_as, text_size = size.tiny, bgcolor = sbg)
+    table.cell(leg, 2, 6, "", bgcolor = color.new(col_as, 60), text_size = size.tiny)
+
+    string bull_st_txt = bull_state == 0 ? "idle" : bull_state == 1 ? "① broke ▲" : "② retest ▲"
+    string bear_st_txt = bear_state == 0 ? "idle" : bear_state == 1 ? "① broke ▼" : "② retest ▼"
+    color  bull_st_col = bull_state == 0 ? color.gray : bull_state == 1 ? color.new(color.lime, 40) : color.lime
+    color  bear_st_col = bear_state == 0 ? color.gray : bear_state == 1 ? color.new(color.red,  40) : color.red
+
+    table.cell(leg, 0, 7, "Bull State", text_color = color.silver, text_size = size.tiny, bgcolor = sbg)
+    table.cell(leg, 1, 7, bull_st_txt,  text_color = bull_st_col,  text_size = size.tiny, bgcolor = sbg)
+    table.cell(leg, 2, 7, "",           bgcolor = bull_st_col,      text_size = size.tiny)
+
+    table.cell(leg, 0, 8, "Bear State", text_color = color.silver, text_size = size.tiny, bgcolor = sbg)
+    table.cell(leg, 1, 8, bear_st_txt,  text_color = bear_st_col,  text_size = size.tiny, bgcolor = sbg)
+    table.cell(leg, 2, 8, "",           bgcolor = bear_st_col,      text_size = size.tiny)
+
+    table.cell(leg, 0, 9, "Bull Div",       text_color = color.silver,  text_size = size.tiny, bgcolor = sbg)
+    table.cell(leg, 1, 9, recent_bull_div ? "✔ recent" : "—", text_color = recent_bull_div ? color.lime : color.gray, text_size = size.tiny, bgcolor = sbg)
+    table.cell(leg, 2, 9, "", bgcolor = recent_bull_div ? color.new(color.lime, 50) : color.new(color.gray, 70), text_size = size.tiny)
+
+    table.cell(leg, 0, 10, "Bear Div",      text_color = color.silver,  text_size = size.tiny, bgcolor = sbg)
+    table.cell(leg, 1, 10, recent_bear_div ? "✔ recent" : "—", text_color = recent_bear_div ? color.red : color.gray, text_size = size.tiny, bgcolor = sbg)
+    table.cell(leg, 2, 10, "", bgcolor = recent_bear_div ? color.new(color.red, 50) : color.new(color.gray, 70), text_size = size.tiny)
+
+    string mean_sig = mean_bull_rej ? "M↑ Bounce" : mean_bear_rej ? "M↓ Reject" : "—"
+    color  mean_col = mean_bull_rej ? color.lime   : mean_bear_rej ? color.red   : color.gray
+    table.cell(leg, 0, 11, "Mean Sig",  text_color = color.silver, text_size = size.tiny, bgcolor = sbg)
+    table.cell(leg, 1, 11, mean_sig,    text_color = mean_col,     text_size = size.tiny, bgcolor = sbg)
+    table.cell(leg, 2, 11, "",          bgcolor = color.new(mean_col, 55), text_size = size.tiny)
